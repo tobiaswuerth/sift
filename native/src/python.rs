@@ -55,6 +55,7 @@ fn native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lists::with_lengths, module)?)?;
     module.add_function(wrap_pyfunction!(lists::unpacked, module)?)?;
     module.add_function(wrap_pyfunction!(lists::counted, module)?)?;
+    module.add_function(wrap_pyfunction!(lists::within, module)?)?;
     module.add_function(wrap_pyfunction!(building::gathered, module)?)?;
     module.add_class::<building::Words>()?;
     module.add_class::<building::Building>()?;

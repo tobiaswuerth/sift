@@ -19,7 +19,7 @@ from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.storage import keyword_lists
 from sift.storage.database import Reading
-from sift.storage.keyword_lists import SegmentRow
+from sift.storage.keyword_lists import Part, SegmentRow
 from sift.storage.keywords import shape_of, totals
 
 
@@ -117,8 +117,16 @@ def live(store: Opened, segment: int, places: Ids, counts: Ids) -> PostingArrays
 
 
 def stored(store: Opened, terms: list[str]) -> dict[str, list[StoredList]]:
+    return _listed(store, keyword_lists.parts(store.transaction, terms), terms)
+
+
+def stored_within(store: Opened, prefix: str) -> dict[str, list[StoredList]]:
+    parts = keyword_lists.parts_within(store.transaction, prefix)
+    return _listed(store, parts, sorted({part.term for part in parts}))
+
+
+def _listed(store: Opened, parts: list[Part], terms: list[str]) -> dict[str, list[StoredList]]:
     found: dict[str, list[StoredList]] = {term: [] for term in terms}
-    parts = keyword_lists.parts(store.transaction, terms)
     whole = [part for part in parts if not part.ranged]
     places, counts, bounds = blocked_all([part.data for part in whole])
     for part, (start, end) in zip(whole, itertools.pairwise(bounds), strict=True):

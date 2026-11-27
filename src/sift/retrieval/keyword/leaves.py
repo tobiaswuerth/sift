@@ -19,11 +19,10 @@ from sift.retrieval.keyword.lists import (
     joined,
     positions_at,
     postings_in,
-    stored,
+    stored_within,
 )
 
 type Expired = Callable[[], bool]
-type Expansions = Mapping[Prefix, Mapping[str, int]]
 
 PREFIX_REMEDY = "write more of the word before the *"
 PHRASE_REMEDY = "add a rarer word to the phrase, or search its words without quotes"
@@ -98,23 +97,17 @@ def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]], e
     return Materialized((candidates[found], counts[found]))
 
 
-def _prefix(store: Opened, terms: list[str], expired: Expired) -> Materialized:
+def _prefix(store: Opened, prefix: Prefix, expired: Expired) -> Materialized:
     if expired():
         return _out_of_time()
-    lists = stored(store, terms)
-    return _union(store, [held for term in terms for held in lists[term]], expired)
+    lists = stored_within(store, prefix.text)
+    return _union(store, [held for each in lists.values() for held in each], expired)
 
 
 def materialized(
-    store: Opened,
-    leaf: Phrase | Prefix,
-    lists: dict[str, list[StoredList]],
-    words: Expansions,
-    expired: Expired = never,
+    store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]], expired: Expired = never
 ) -> Materialized:
-    if isinstance(leaf, Phrase):
-        return _phrase(store, leaf, lists, expired)
-    return _prefix(store, list(words[leaf]), expired)
+    return _phrase(store, leaf, lists, expired) if isinstance(leaf, Phrase) else _prefix(store, leaf, expired)
 
 
 def _ranges(store: Opened, held: StoredList) -> Ids:

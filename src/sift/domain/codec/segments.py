@@ -117,14 +117,21 @@ def stepped(held: Merger, segment: int) -> MergeStep:
     return MergeStep(FiledLists(*found), wanted, done)
 
 
-def unpacked(lists: bytes, places: bytes | None, terms: Sequence[str]) -> list[PackedList]:
+def unpacked(first: str, lists: bytes, places: bytes | None, terms: Sequence[str]) -> list[PackedList]:
     try:
-        return [PackedList(*each) for each in _native.unpacked(lists, places, terms)]
+        return [PackedList(*each) for each in _native.unpacked(first, lists, places, terms)]
     except ValueError as error:
         raise DamagedError(str(error)) from None
 
 
-def counted(packs: Sequence[bytes], low: str, high: str | None) -> list[tuple[str, int]]:
+def within(first: str, lists: bytes, low: str, high: str | None) -> list[PackedList]:
+    try:
+        return [PackedList(*each) for each in _native.within(first, lists, low, high)]
+    except ValueError as error:
+        raise DamagedError(str(error)) from None
+
+
+def counted(packs: Sequence[tuple[str, bytes]], low: str, high: str | None) -> list[tuple[str, int]]:
     try:
         return _native.counted(packs, low, high)
     except ValueError as error:

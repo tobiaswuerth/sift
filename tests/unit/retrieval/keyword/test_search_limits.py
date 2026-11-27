@@ -197,6 +197,28 @@ def test_a_phrase_with_a_word_no_passage_holds_reads_nothing() -> None:
         assert search(stores, Phrase(("of", "the", "w1")), 10, tuning=Tuning(most_read=0)) == ()
 
 
+def test_a_word_counted_gone_more_often_than_its_lists_hold_is_damage_to_a_search() -> None:
+    with collections([[{"a.md": ("", "A", "w1 w2")}]]) as (stores, _):
+        (store,) = stores
+        store.transaction.connection.execute(
+            "INSERT INTO keyword_gone(term, segment, chunks) SELECT 'w1', id, 5 FROM keyword_segments"
+        )
+        with pytest.raises(DamagedError, match="counted gone"):
+            search(stores, Term("w1"), 10)
+
+
+def test_the_lists_of_a_prefix_are_read_by_its_bounds_and_not_word_by_word() -> None:
+    notes: Round = {"a.md": ("", "A", "w1 w10 w11"), "b.md": ("", "B", "w12 w2")}
+    with collections([[notes]]) as (stores, _):
+        (store,) = stores
+        statements: list[str] = []
+        store.transaction.connection.set_trace_callback(statements.append)
+        found = search(stores, Prefix("w1"), 10)
+        store.transaction.connection.set_trace_callback(None)
+    named = [word for word in ("w10", "w11") if any(word in each for each in statements)]
+    assert (len(found), named, sum("keyword_packs" in each for each in statements) > 0) == (2, [], True)
+
+
 def test_a_prefix_of_more_words_than_a_search_expands_is_refused() -> None:
     notes: Round = {"a.md": ("", "A", "w1 w10 w11"), "b.md": ("", "B", "w12")}
     with collections([[notes]]) as (stores, _):

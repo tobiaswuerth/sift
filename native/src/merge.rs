@@ -89,7 +89,7 @@ impl Merger {
         }
         let mut rows = Vec::new();
         for (lists, places) in packs {
-            let found = entries(lists.as_ref(), Some(places.as_ref()))?;
+            let found = entries(lists.as_ref(), Some(places.as_ref()), None)?;
             rows.extend(found.iter().filter(|each| !each.postings.is_empty()).map(|each| Fed {
                 term: Arc::from(each.term),
                 chunks: each.chunks,

@@ -5,7 +5,7 @@ use pyo3::types::{PyBytes, PyList, PyString};
 
 use crate::lists::{blocks, places};
 use crate::numbers::little_endian;
-use crate::packs::{self, entries};
+use crate::packs::{self, Entry, entries};
 use crate::python::{lengths_of, numbers_of};
 use crate::segment::lengths_written;
 
@@ -33,8 +33,16 @@ pub fn positions_all<'py>(each: &Bound<'py, PyAny>, counts: &Bound<'py, PyAny>) 
     Ok(PyBytes::new(py, &found.map_err(PyValueError::new_err)?))
 }
 
+fn told<'py>(py: Python<'py>, each: &Entry, placed: bool) -> Unpacked<'py> {
+    let short = (!each.postings.is_empty()).then(|| PyBytes::new(py, each.postings));
+    let positions = short.as_ref().filter(|_| placed);
+    let positions = positions.map(|_| PyBytes::new(py, each.positions));
+    (PyString::new(py, each.term), each.chunks, short, positions)
+}
+
 #[pyfunction]
 pub fn unpacked<'py>(
+    first: &str,
     lists: &Bound<'py, PyAny>,
     places: &Bound<'py, PyAny>,
     terms: &Bound<'py, PyAny>,
@@ -45,26 +53,36 @@ pub fn unpacked<'py>(
         terms.extract::<Vec<PyBackedStr>>()?,
     );
     let places: Option<PyBackedBytes> = places.extract()?;
-    let found = entries(&lists, places.as_deref()).map_err(PyValueError::new_err)?;
+    let found = entries(&lists, places.as_deref(), Some(first)).map_err(PyValueError::new_err)?;
     let wanted = found
         .iter()
         .filter(|each| terms.iter().any(|term| &**term == each.term));
-    let told = wanted.map(|each| {
-        let short = (!each.postings.is_empty()).then(|| PyBytes::new(py, each.postings));
-        let positions = short.as_ref().and(places.as_ref());
-        let positions = positions.map(|_| PyBytes::new(py, each.positions));
-        (PyString::new(py, each.term), each.chunks, short, positions)
-    });
-    Ok(told.collect())
+    Ok(wanted.map(|each| told(py, each, places.is_some())).collect())
+}
+
+#[pyfunction]
+#[pyo3(signature = (first, lists, low, high))]
+pub fn within<'py>(
+    first: &str,
+    lists: &Bound<'py, PyAny>,
+    low: &str,
+    high: Option<&str>,
+) -> PyResult<Vec<Unpacked<'py>>> {
+    let (py, lists) = (lists.py(), lists.extract::<PyBackedBytes>()?);
+    let found = entries(&lists, None, Some(first)).map_err(PyValueError::new_err)?;
+    let wanted = found
+        .iter()
+        .filter(|each| each.term >= low && high.is_none_or(|high| each.term < high));
+    Ok(wanted.map(|each| told(py, each, false)).collect())
 }
 
 #[pyfunction]
 #[pyo3(signature = (rows, low, high))]
 pub fn counted<'py>(rows: &Bound<'py, PyAny>, low: &str, high: Option<&str>) -> PyResult<Counted<'py>> {
-    let (py, rows) = (rows.py(), rows.extract::<Vec<PyBackedBytes>>()?);
+    let (py, rows) = (rows.py(), rows.extract::<Vec<(PyBackedStr, PyBackedBytes)>>()?);
     let mut found = Vec::new();
-    for lists in &rows {
-        let held = packs::counted(lists, low, high).map_err(PyValueError::new_err)?;
+    for (first, lists) in &rows {
+        let held = packs::counted(lists, Some(first), low, high).map_err(PyValueError::new_err)?;
         found.extend(held.into_iter().map(|(term, chunks)| (PyString::new(py, term), chunks)));
     }
     Ok(found)

@@ -8,6 +8,7 @@ const BITS: usize = 7;
 const MOST_NUMBER_BYTES: usize = 9;
 const DAMAGED: &str = "a pack of lists holds other than its head says";
 const DISORDERED: &str = "lists are packed in the order of their terms, each term once";
+const MISFILED: &str = "a pack of lists is filed under another term than its first";
 
 pub struct Pack {
     pub first: Box<str>,
@@ -122,7 +123,7 @@ impl Packer {
     }
 }
 
-fn heads(lists: &[u8]) -> Result<(Vec<Heading<'_>>, usize), String> {
+fn heads<'a>(lists: &'a [u8], first: Option<&str>) -> Result<(Vec<Heading<'a>>, usize), String> {
     let Some((count, _)) = lists.split_first_chunk::<COUNT>() else {
         return Err(DAMAGED.to_owned());
     };
@@ -147,19 +148,27 @@ fn heads(lists: &[u8]) -> Result<(Vec<Heading<'_>>, usize), String> {
     if found.is_empty() || !whole {
         return Err(DAMAGED.to_owned());
     }
+    if first.is_some_and(|first| found[0].term != first) {
+        return Err(MISFILED.to_owned());
+    }
     Ok((found, at))
 }
 
-pub fn counted<'a>(lists: &'a [u8], low: &str, high: Option<&str>) -> Result<Vec<(&'a str, usize)>, String> {
-    let (heads, _) = heads(lists)?;
+pub fn counted<'a>(
+    lists: &'a [u8],
+    first: Option<&str>,
+    low: &str,
+    high: Option<&str>,
+) -> Result<Vec<(&'a str, usize)>, String> {
+    let (heads, _) = heads(lists, first)?;
     let within = heads
         .iter()
         .filter(|head| head.term >= low && high.is_none_or(|high| head.term < high));
     Ok(within.map(|head| (head.term, head.chunks)).collect())
 }
 
-pub fn entries<'a>(lists: &'a [u8], places: Option<&'a [u8]>) -> Result<Vec<Entry<'a>>, String> {
-    let (heads, mut at) = heads(lists)?;
+pub fn entries<'a>(lists: &'a [u8], places: Option<&'a [u8]>, first: Option<&str>) -> Result<Vec<Entry<'a>>, String> {
+    let (heads, mut at) = heads(lists, first)?;
     let (mut found, mut past) = (Vec::with_capacity(heads.len()), 0);
     for head in heads {
         let postings = taken(lists, &mut at, head.listed)?;

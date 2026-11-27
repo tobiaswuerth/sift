@@ -13,7 +13,7 @@ from sift.domain.text.notes import note
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS
 from sift.storage.database import BATCHES, Batches, Count, reading, rows, run, writing
 from sift.storage.documents import add_documents, put_source
-from sift.storage.keyword_lists import dead_within, gone, prefixed, segments
+from sift.storage.keyword_lists import dead_within, gone, parts, parts_within, prefixed, segments
 from sift.storage.keywords import totals, writing_documents
 from tests.examples import few
 from tests.keyword_indexes import (
@@ -112,16 +112,47 @@ def test_a_prefix_is_counted_no_further_than_makes_it_certain_to_begin_more_word
         return 0
 
     words = " ".join(f"w{number:05}" for number in range(30_000))
+    since_gone = " ".join(f"wz{number:05}" for number in range(20_000))
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, Shape()) as connection:
-        applied(connection, [{"a.md": ("", "a", words)}, {"b.md": ("", "b", "w1 w2 w3")}, {"b.md": None}], KEEPING)
+        applied(connection, [{"a.md": ("", "a", words), "b.md": ("", "b", since_gone)}, {"b.md": None}], KEEPING)
         with reading(connection) as transaction:
+            (gone_rows,) = rows(transaction, Count, "SELECT count(*) FROM keyword_gone")
             connection.set_progress_handler(tick, 100)
             certain = prefixed(transaction, "w", 10)
             cut = len(ticks)
             whole = prefixed(transaction, "w", EVERY)
             connection.set_progress_handler(None, 0)
+    assert gone_rows.n > 15_000
     assert 10 < len(certain) < len(whole) > 20_000
+    assert not any(word.startswith("wz") for word in whole)
     assert 3 * cut < len(ticks) - cut
+
+
+def test_more_passages_of_a_word_counted_gone_than_its_lists_hold_are_damage() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": ("", "a", "super supra")}])
+        with writing(connection) as transaction:
+            run(
+                transaction,
+                "INSERT INTO keyword_gone(term, segment, chunks) SELECT 'super', id, 5 FROM keyword_segments",
+            )
+        with reading(connection) as transaction, pytest.raises(DamagedError, match="counted gone"):
+            prefixed(transaction, "su", EVERY)
+
+
+def test_a_pack_filed_under_another_term_than_its_first_is_damage() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": ("", "a", "super supra")}])
+        with writing(connection) as transaction:
+            run(transaction, "UPDATE keyword_packs SET first = '0'")
+        with reading(connection) as transaction:
+            for read in (
+                lambda: prefixed(transaction, "su", EVERY),
+                lambda: parts(transaction, ["super"]),
+                lambda: parts_within(transaction, "su"),
+            ):
+                with pytest.raises(DamagedError, match="filed under another term than its first"):
+                    read()
 
 
 def test_a_segment_is_written_with_no_statement_for_each_of_its_terms() -> None:

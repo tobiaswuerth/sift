@@ -53,7 +53,9 @@ def postings(made: WrittenSegment) -> list[Postings]:
             else:
                 found.append(Postings(term, count, ShortPostings(coded, placed)))
     assert (blocks, ranged) == ({}, {})
-    assert [(each.term, each.chunks) for each in found] == counted([each[2] for each in made.filed.packs], "", None)
+    assert [(each.term, each.chunks) for each in found] == counted(
+        [(each[1], each[2]) for each in made.filed.packs], "", None
+    )
     return found
 
 

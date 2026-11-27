@@ -92,7 +92,7 @@ pub fn shown(filed: &Filed) -> Result<Told, String> {
     let (mut firsts, mut lists) = (Vec::new(), Vec::new());
     for pack in &filed.packs {
         firsts.push(pack.first.to_string());
-        for each in entries(&pack.lists, Some(&pack.places))? {
+        for each in entries(&pack.lists, Some(&pack.places), Some(&pack.first))? {
             let coded = (each.postings.to_vec(), each.positions.to_vec());
             let ranges = filed.ranged.iter().find(|held| &*held.term == each.term);
             let short = (!each.postings.is_empty()).then_some(coded);
@@ -120,7 +120,7 @@ pub fn terms(filed: &Filed) -> Result<Vec<String>, String> {
 pub fn counts(filed: &Filed) -> Result<Vec<(String, usize)>, String> {
     let mut found = Vec::new();
     for pack in &filed.packs {
-        let held = counted(&pack.lists, "", None)?;
+        let held = counted(&pack.lists, None, "", None)?;
         found.extend(held.into_iter().map(|(term, chunks)| (term.to_owned(), chunks)));
     }
     Ok(found)

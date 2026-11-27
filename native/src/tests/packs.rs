@@ -6,7 +6,7 @@ const PACK_BYTES: usize = 4000;
 type Entered = (String, usize, Vec<u8>, Vec<u8>);
 
 fn told(pack: &Pack, placed: bool) -> Result<Vec<Entered>, String> {
-    let found = entries(&pack.lists, placed.then_some(&pack.places[..]))?;
+    let found = entries(&pack.lists, placed.then_some(&pack.places[..]), None)?;
     let shown = found.iter().map(|each| {
         let term = each.term.to_owned();
         (term, each.chunks, each.postings.to_vec(), each.positions.to_vec())
@@ -87,26 +87,26 @@ fn a_damaged_pack_is_refused() -> Result<(), String> {
         return Err("a packer that took lists hands back a pack".to_owned());
     };
     for cut in 0..pack.lists.len() {
-        let found = entries(&pack.lists[..cut], Some(&pack.places));
+        let found = entries(&pack.lists[..cut], Some(&pack.places), None);
         assert!(refused(found, "a pack of lists"), "{cut}");
     }
     assert!(refused(
-        entries(&pack.lists, Some(&pack.places[..3])),
+        entries(&pack.lists, Some(&pack.places[..3]), None),
         "a pack of lists"
     ));
     for (changed, more) in [(5, 0xFF), (4, 0x89)] {
         let mut named = pack.lists.clone();
         named[changed] = more;
-        assert!(refused(entries(&named, None), "a pack of lists"));
+        assert!(refused(entries(&named, None, None), "a pack of lists"));
     }
     let mut endless = pack.lists[..4].to_vec();
     endless.extend([0x80; 12]);
-    assert!(refused(entries(&endless, None), "a pack of lists"));
+    assert!(refused(entries(&endless, None, None), "a pack of lists"));
     let (mut longer, mut placed) = (pack.lists.clone(), pack.places.clone());
     longer.push(0);
     placed.push(0);
-    assert!(refused(entries(&longer, Some(&pack.places)), "a pack of lists"));
-    assert!(refused(entries(&pack.lists, Some(&placed)), "a pack of lists"));
+    assert!(refused(entries(&longer, Some(&pack.places), None), "a pack of lists"));
+    assert!(refused(entries(&pack.lists, Some(&placed), None), "a pack of lists"));
     Ok(())
 }
 
@@ -122,21 +122,21 @@ fn the_terms_of_a_pack_within_bounds_are_told_with_their_passages_and_a_pack_cut
         return Err("a packer that took lists hands back a pack".to_owned());
     };
     let every = [("alpha", 2), ("beta", 5000), ("betz", 4), ("m\u{fc}ller", 1)];
-    assert_eq!(counted(&pack.lists, "", None)?, every);
-    assert_eq!(counted(&pack.lists, "bet", Some("beu"))?, every[1..3]);
-    assert_eq!(counted(&pack.lists, "beta", Some("betz"))?, every[1..2]);
-    assert_eq!(counted(&pack.lists, "m", Some("n"))?, every[3..]);
-    assert_eq!(counted(&pack.lists, "n", None)?, every[..0]);
-    assert_eq!(counted(&pack.lists, "a", Some("alpha"))?, every[..0]);
+    assert_eq!(counted(&pack.lists, None, "", None)?, every);
+    assert_eq!(counted(&pack.lists, None, "bet", Some("beu"))?, every[1..3]);
+    assert_eq!(counted(&pack.lists, None, "beta", Some("betz"))?, every[1..2]);
+    assert_eq!(counted(&pack.lists, None, "m", Some("n"))?, every[3..]);
+    assert_eq!(counted(&pack.lists, None, "n", None)?, every[..0]);
+    assert_eq!(counted(&pack.lists, None, "a", Some("alpha"))?, every[..0]);
     for cut in 0..pack.lists.len() {
         assert!(
-            refused(counted(&pack.lists[..cut], "", None), "a pack of lists"),
+            refused(counted(&pack.lists[..cut], None, "", None), "a pack of lists"),
             "{cut}"
         );
     }
     let mut longer = pack.lists.clone();
     longer.push(0);
-    assert!(refused(counted(&longer, "", None), "a pack of lists"));
+    assert!(refused(counted(&longer, None, "", None), "a pack of lists"));
     Ok(())
 }
 
@@ -161,18 +161,24 @@ fn made(held: &[Crafted]) -> (Vec<u8>, Vec<u8>) {
 #[test]
 fn a_pack_whose_terms_do_not_rise_or_that_holds_no_list_is_refused() -> Result<(), String> {
     let rising = made(&[("a", 1, &[1], &[2]), ("b", 1, &[3], &[4])]);
-    assert_eq!(counted(&rising.0, "", None)?, [("a", 1), ("b", 1)]);
-    assert_eq!(entries(&rising.0, Some(&rising.1))?.len(), 2);
+    assert_eq!(counted(&rising.0, None, "", None)?, [("a", 1), ("b", 1)]);
+    assert_eq!(entries(&rising.0, Some(&rising.1), None)?.len(), 2);
     for terms in [["b", "a"], ["a", "a"]] {
         let (lists, places) = made(&[(terms[0], 1, &[1], &[2]), (terms[1], 1, &[3], &[4])]);
-        assert!(refused(entries(&lists, Some(&places)), "a pack of lists"));
-        assert!(refused(counted(&lists, "", None), "a pack of lists"));
+        assert!(refused(entries(&lists, Some(&places), None), "a pack of lists"));
+        assert!(refused(counted(&lists, None, "", None), "a pack of lists"));
     }
-    assert!(refused(counted(&[0, 0, 0, 0], "", None), "a pack of lists"));
-    assert!(refused(entries(&[0, 0, 0, 0], None), "a pack of lists"));
-    assert_eq!(counted(&[1, 0, 0, 0, 1, b'a', 1, 0, 0], "", None)?, [("a", 1)]);
+    assert!(refused(counted(&[0, 0, 0, 0], None, "", None), "a pack of lists"));
+    assert!(refused(entries(&[0, 0, 0, 0], None, None), "a pack of lists"));
+    assert_eq!(counted(&[1, 0, 0, 0, 1, b'a', 1, 0, 0], None, "", None)?, [("a", 1)]);
+    assert!(refused(
+        counted(&rising.0, Some("b"), "", None),
+        "filed under another term"
+    ));
+    assert!(refused(entries(&rising.0, None, Some("")), "filed under another term"));
+    assert_eq!(counted(&rising.0, Some("a"), "b", None)?, [("b", 1)]);
     let longer_than_it_is = [1, 0, 0, 0, 0x81, 0, b'a', 1, 0, 0];
-    assert!(refused(counted(&longer_than_it_is, "", None), "a pack of lists"));
+    assert!(refused(counted(&longer_than_it_is, None, "", None), "a pack of lists"));
     Ok(())
 }
 

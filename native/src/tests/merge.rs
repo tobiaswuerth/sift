@@ -90,7 +90,7 @@ fn a_term_only_dead_chunks_held_is_gone_after_a_merge() -> Result<(), String> {
 fn a_merge_takes_terms_together_up_to_its_postings_or_bytes_and_a_term_past_either_alone() -> Result<(), String> {
     let texts = [(0, "a b"), (1, "a b"), (2, "a b"), (3, "a c"), (4, "a c"), (5, "a c")];
     let first = built(&texts[..3], wide()?)?;
-    let sizes: Vec<usize> = entries(&first.filed.packs[0].lists, Some(&first.filed.packs[0].places))?
+    let sizes: Vec<usize> = entries(&first.filed.packs[0].lists, Some(&first.filed.packs[0].places), None)?
         .iter()
         .map(|each| each.postings.len() + each.positions.len())
         .collect();

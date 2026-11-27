@@ -13,7 +13,6 @@ from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
 from sift.retrieval.keyword.leaves import (
     PHRASE_REMEDY,
-    Expansions,
     Expired,
     Limit,
     materialized,
@@ -24,7 +23,7 @@ from sift.retrieval.keyword.leaves import (
 )
 from sift.retrieval.keyword.lists import Opened, PostingArrays, StoredList, owners, stored
 from sift.retrieval.keyword.scoring import Query, Scored, bounds, scored, within
-from sift.storage.keyword_lists import gone, prefixed
+from sift.storage.keyword_lists import gone, living, prefixed
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +199,7 @@ class Planned:
     leaves: tuple[Leaf, ...]
     lists: dict[str, list[StoredList]]
     reads: Mapping[Phrase | Prefix, int]
-    words: Expansions
+    words: Mapping[Prefix, Mapping[str, int]]
 
 
 def planned(store: Opened, expression: Expression, tuning: Tuning = TUNING) -> Planned:
@@ -236,9 +235,9 @@ def prepared(plan: Planned, *, allowed: AllowedDocuments | None = None, expired:
     cut = False
     for leaf in plan.leaves:
         if isinstance(leaf, Term):
-            found[leaf], df[leaf] = lists[leaf.text], size(lists[leaf.text]) - deleted.get(leaf.text, 0)
+            found[leaf], df[leaf] = lists[leaf.text], living(size(lists[leaf.text]), deleted.get(leaf.text, 0))
         else:
-            read = materialized(store, leaf, lists, plan.words, expired)
+            read = materialized(store, leaf, lists, expired)
             found[leaf], df[leaf] = read.postings, len(read.postings[0])
             cut = cut or read.cut
     return Prepared(store, found, df, allowed, cut)
