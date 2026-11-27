@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 
 use crate::numbers::narrow;
-use crate::packed::deflated;
+use crate::packed::{deflated, inflated_into};
 use crate::packs::Packer;
 use crate::postings::{Filed, MOST_LENGTHS_SHIFT, Postings, Row, Shape, joined};
 use crate::words::{Seen, Table, Terms};
@@ -11,6 +11,8 @@ const TOGETHER: usize = 64;
 const LENGTH: usize = 4;
 const PASSAGES: usize = 64;
 const GAPS: usize = 2;
+const BLOCKS: usize = 16;
+const UNEVEN: &str = "each chunk has a length, in blocks of at most 2**20";
 
 pub struct Passages<'a> {
     pub places: &'a [i64],
@@ -91,7 +93,7 @@ fn cut(field: &str, most: usize) -> (&str, bool) {
 
 pub fn lengths_written(ids: &[i64], lengths: &[u32], shift: u32) -> Result<Vec<(i64, Vec<u8>)>, String> {
     if ids.len() != lengths.len() || shift > MOST_LENGTHS_SHIFT {
-        return Err("each chunk has a length, in blocks of at most 2**20".to_owned());
+        return Err(UNEVEN.to_owned());
     }
     let (size, mask) = (1usize << shift, (1i64 << shift) - 1);
     let paired: Vec<(i64, u32)> = ids.iter().copied().zip(lengths.iter().copied()).collect();
@@ -103,6 +105,24 @@ pub fn lengths_written(ids: &[i64], lengths: &[u32], shift: u32) -> Result<Vec<(
             dense[start..start + LENGTH].copy_from_slice(&length.to_le_bytes());
         }
         found.push((run[0].0 >> shift, deflated(&dense, None)?));
+    }
+    Ok(found)
+}
+
+pub fn lengths_read<R: AsRef<[u8]> + Sync>(rows: &[R], shift: u32) -> Result<Vec<u8>, String> {
+    if shift > MOST_LENGTHS_SHIFT {
+        return Err(UNEVEN.to_owned());
+    }
+    let size = LENGTH << shift;
+    let mut found = vec![0u8; rows.len() * size];
+    if rows.len() < 2 * BLOCKS {
+        for (row, block) in rows.iter().zip(found.chunks_exact_mut(size)) {
+            inflated_into(row.as_ref(), block)?;
+        }
+    } else {
+        let paired = rows.par_iter().zip(found.par_chunks_exact_mut(size));
+        let unpacked = |(row, block): (&R, &mut [u8])| inflated_into(row.as_ref(), block);
+        paired.with_min_len(BLOCKS).try_for_each(unpacked)?;
     }
     Ok(found)
 }

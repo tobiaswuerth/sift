@@ -7,7 +7,7 @@ use crate::lists::{blocks, places};
 use crate::numbers::little_endian;
 use crate::packs::{self, Entry, entries};
 use crate::python::{lengths_of, numbers_of};
-use crate::segment::lengths_written;
+use crate::segment::{lengths_read, lengths_written};
 
 type Blocked<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Vec<usize>);
 type Counted<'py> = Vec<(Bound<'py, PyString>, usize)>;
@@ -86,6 +86,13 @@ pub fn counted<'py>(rows: &Bound<'py, PyAny>, low: &str, high: Option<&str>) -> 
         found.extend(held.into_iter().map(|(term, chunks)| (PyString::new(py, term), chunks)));
     }
     Ok(found)
+}
+
+#[pyfunction]
+pub fn lengths_all<'py>(each: &Bound<'py, PyAny>, shift: u32) -> PyResult<Bound<'py, PyBytes>> {
+    let (py, rows) = (each.py(), each.extract::<Vec<PyBackedBytes>>()?);
+    let found = py.detach(|| lengths_read(&rows, shift));
+    Ok(PyBytes::new(py, &found.map_err(PyValueError::new_err)?))
 }
 
 #[pyfunction]

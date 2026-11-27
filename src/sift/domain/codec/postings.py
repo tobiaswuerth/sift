@@ -16,7 +16,6 @@ type Bytes = NDArray[np.uint8]
 RAW, PACKED = b"\x00", b"\x01"
 RANGES_HEAD = struct.Struct("<qI")
 GAP_BYTES = 4
-LENGTH_BYTES = 4
 COUNT_BYTES = 1
 BEST_BYTES = 1
 MOST_INFLATED_BYTES = 64 << 20
@@ -44,16 +43,6 @@ def _inflated(data: bytes) -> bytes:
     _sound(
         holds=unpacking.eof, problem=f"a packed list unpacks to more than {MOST_INFLATED_BYTES:,} bytes, or ends early"
     )
-    return found
-
-
-def _inflated_to(data: bytes, size: int) -> bytes:
-    unpacking = zlib.decompressobj()
-    try:
-        found = unpacking.decompress(data, size + 1)
-    except zlib.error as error:
-        raise DamagedError(f"a packed list does not unpack: {error}") from None
-    _sound(holds=len(found) == size and unpacking.eof, problem=f"a packed list unpacks to other than {size:,} bytes")
     return found
 
 
@@ -108,6 +97,9 @@ def with_lengths(ids: Ids, lengths: Ids, shift: int) -> dict[int, bytes]:
     return dict(_native.with_lengths(whole(ids), whole(lengths), shift))
 
 
-def lengths_of(data: bytes, shift: int) -> Ids:
-    raw = _inflated_to(data, LENGTH_BYTES << shift)
-    return np.frombuffer(raw, STORED_U32).astype(np.int64)
+def lengths_all(each: Sequence[bytes], shift: int) -> NDArray[np.uint32]:
+    try:
+        found = _native.lengths_all(each, shift)
+    except ValueError as error:
+        raise DamagedError(str(error)) from None
+    return np.frombuffer(found, STORED_U32).astype(np.uint32, copy=False).reshape(len(each), 1 << shift)

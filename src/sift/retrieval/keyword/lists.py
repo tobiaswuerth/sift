@@ -11,7 +11,7 @@ from sift.domain.codec.postings import (
     Ranges,
     blocked,
     blocked_all,
-    lengths_of,
+    lengths_all,
     positions_of,
     ranges_of,
 )
@@ -247,7 +247,7 @@ def _loaded(store: Opened, segment: SegmentRow, blocks: Ids) -> Dense:
     found = keyword_lists.lengths(store.transaction, segment.id, ints(missing))
     if [row.block for row in found] != ints(missing):
         raise DamagedError("the lengths of some chunks are missing from the keyword index")
-    read = np.stack([lengths_of(row.lengths, shift) for row in found]).astype(np.uint32)
+    read = lengths_all([row.lengths for row in found], shift)
     table = np.concatenate([held.table, read])
     numbers = np.concatenate([held.numbers, missing])
     order = np.argsort(numbers, kind="stable")

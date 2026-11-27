@@ -7,7 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.arrays import floats, ints
-from sift.domain.codec.postings import MOST_INFLATED_BYTES, blocked, lengths_of, positions_of, ranges_of
+from sift.domain.codec.postings import MOST_INFLATED_BYTES, blocked, lengths_all, positions_of, ranges_of
 from sift.domain.codec.segments import GAP, WrittenSegment, building, counted, gathered, stream, written
 from sift.domain.codec.shape import MOST_BLOCK, Shape
 from sift.domain.rank.bm25 import STEPS, TOP, term_scores, unquantized
@@ -100,7 +100,7 @@ def test_a_segment_holds_where_each_term_occurs(columns: list[tuple[list[str], .
     assert made.tokens == sum(sizes.values())
     assert (made.first, made.last, made.chunks) == (listed[0], listed[-1], len(ids))
     for block, data in lengths(made).items():
-        dense = lengths_of(data, shape.lengths_shift)
+        dense = lengths_all([data], shape.lengths_shift).reshape(-1)
         for chunk, length in sizes.items():
             if chunk >> shape.lengths_shift == block:
                 assert dense[chunk & ((1 << shape.lengths_shift) - 1)] == length
@@ -161,7 +161,7 @@ def test_no_list_a_shape_lets_be_written_unpacks_to_more_than_a_reader_takes() -
 def test_a_chunk_of_no_word_is_in_the_segment_with_no_tokens() -> None:
     made = segment(np.array([7, 8], np.int64), [([], [], []), (["a"], [], [])], average=0.5)
     assert [(held.term, held.chunks) for held in postings(made)] == [("a", 1)]
-    assert ints(lengths_of(lengths(made)[0], 10)[7:9]) == [0, 1]
+    assert ints(lengths_all([lengths(made)[0]], 10).reshape(-1)[7:9]) == [0, 1]
 
 
 @given(st.lists(st.text(st.characters(exclude_categories=["Cs"]), max_size=40), min_size=1, max_size=8))

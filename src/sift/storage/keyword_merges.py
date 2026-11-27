@@ -6,7 +6,7 @@ from typing import NamedTuple
 import numpy as np
 
 from sift.domain.arrays import Ids, first, firsts, ints, last
-from sift.domain.codec.postings import lengths_of, with_lengths
+from sift.domain.codec.postings import lengths_all, with_lengths
 from sift.domain.codec.segments import MergedChunks, MergeLimits, fed, fed_packs, merger, stepped
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
@@ -75,10 +75,9 @@ def _listed(
 
 
 def _lengths(transaction: WritingDocuments, merged: Sequence[PlacedSegment], live: Ids, shift: int) -> Ids:
-    dense = {
-        (row.segment, row.block): lengths_of(row.lengths, shift)
-        for row in rows(transaction, SegmentLengths, LENGTHS, (json.dumps([each.id for each in merged]),))
-    }
+    held = rows(transaction, SegmentLengths, LENGTHS, (json.dumps([each.id for each in merged]),))
+    table = lengths_all([row.lengths for row in held], shift)
+    dense = {(row.segment, row.block): at for at, row in enumerate(held)}
     starts = np.array([each.first for each in merged], np.int64)
     owners = np.array([each.id for each in merged], np.int64)[np.searchsorted(starts, live, side="right") - 1]
     blocks = live >> shift
@@ -88,7 +87,7 @@ def _lengths(transaction: WritingDocuments, merged: Sequence[PlacedSegment], liv
         key = (first(owners[start:end]), first(blocks[start:end]))
         if key not in dense:
             raise DamagedError("the lengths of some chunks are missing from the keyword index")
-        found[start:end] = dense[key][live[start:end] & ((1 << shift) - 1)]
+        found[start:end] = table[dense[key], live[start:end] & ((1 << shift) - 1)]
     return found
 
 

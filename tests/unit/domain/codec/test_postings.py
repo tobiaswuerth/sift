@@ -1,6 +1,5 @@
 import contextlib
 import itertools
-import tracemalloc
 import zlib
 
 import numpy as np
@@ -17,7 +16,7 @@ from sift.domain.codec.postings import (
     RAW,
     blocked,
     blocked_all,
-    lengths_of,
+    lengths_all,
     positions_of,
     ranges_of,
     with_lengths,
@@ -124,15 +123,16 @@ def test_lengths_come_back_by_id_in_blocks_of_consecutive_ids(chosen: list[int],
     lengths = np.array(drawn, np.int64)
     written = with_lengths(found, lengths, shift=6)
     assert set(written) == set(ints(found >> 6))
-    for number, held in written.items():
-        dense = lengths_of(held, 6)
+    table = lengths_all(list(written.values()), 6)
+    for at, number in enumerate(written):
+        dense = table[at : at + 1].reshape(-1)
         inside = np.flatnonzero(np.isin(found >> 6, [number]))
         assert ints(dense[found[inside] & 63]) == ints(lengths[inside])
         assert int(np.count_nonzero(dense)) == len(inside)
 
 
-def _lengths(data: bytes) -> NDArray[np.int64]:
-    return lengths_of(data, 6)
+def _lengths(data: bytes) -> NDArray[np.uint32]:
+    return lengths_all([data], 6)
 
 
 def _decoded_or_refused(data: bytes) -> None:
@@ -201,11 +201,17 @@ def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -
     with pytest.raises(DamagedError, match="ranges hold ids out of order"):
         ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(4) + bytes(4)))
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
-        lengths_of(zlib.compress(bytes(7)), 6)
+        lengths_all([zlib.compress(bytes(7))], 6)
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
-        lengths_of(zlib.compress(bytes(1 << 16)), 6)
+        lengths_all([zlib.compress(bytes(1 << 26))], 6)
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
-        lengths_of(zlib.compress(bytes(256))[:-4], 6)
+        lengths_all([zlib.compress(bytes(256))[:-4]], 6)
+    with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
+        lengths_all([zlib.compress(bytes(256))] * 40 + [zlib.compress(bytes(7))], 6)
+    with pytest.raises(DamagedError, match="bytes after its end"):
+        lengths_all([zlib.compress(bytes(256)) + bytes(1)], 6)
+    with pytest.raises(DamagedError, match="does not unpack"):
+        lengths_all([b"junk"], 6)
     with pytest.raises(DamagedError, match="positions other than its counts"):
         positions_of(RAW + b"\x01\x02", np.array([3], np.int64))
 
@@ -220,16 +226,13 @@ def test_positions_up_to_the_last_a_passage_holds_are_read() -> None:
     assert ints(positions_of(RAW + varint(2**32 - 1), np.array([1], np.int64))) == [2**32 - 1]
 
 
-def test_lengths_packed_far_larger_than_their_block_are_never_unpacked_whole() -> None:
-    packed = zlib.compress(bytes(1 << 26))
-    tracemalloc.start()
-    try:
-        with pytest.raises(DamagedError, match="unpacks to other than"):
-            lengths_of(packed, 6)
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    assert peak < 1 << 20
+def test_the_lengths_of_many_blocks_come_back_as_a_row_for_each_and_of_none_as_no_row() -> None:
+    blocks = np.arange(100 << 6, dtype=np.int64)
+    written = with_lengths(blocks, blocks % 977 + 1, shift=6)
+    table = lengths_all(list(written.values()), 6)
+    assert (table.shape, table.dtype) == ((100, 64), np.uint32)
+    assert ints(table.reshape(-1)) == ints(blocks % 977 + 1)
+    assert lengths_all([], 6).shape == (0, 64)
 
 
 def test_numbers_are_kept_little_endian_on_every_machine() -> None:

@@ -12,6 +12,7 @@ const ROOM: usize = 64;
 const NO_PACKING: &str = "a list does not pack";
 const NO_UNPACKING: &str = "a packed list does not unpack";
 const TOO_LARGE_OR_SHORT: &str = "a packed list unpacks to more than 67,108,864 bytes, or ends early";
+const AFTER_END: &str = "a packed list holds bytes after its end";
 
 fn taken(total: u64) -> usize {
     usize::try_from(total).unwrap_or(usize::MAX)
@@ -57,7 +58,7 @@ fn inflated(data: &[u8]) -> Result<Vec<u8>, String> {
             return Err(TOO_LARGE_OR_SHORT.to_owned());
         }
         if status == Status::StreamEnd && taken(unpacking.total_in()) != data.len() {
-            return Err("a packed list holds bytes after its end".to_owned());
+            return Err(AFTER_END.to_owned());
         }
         if status == Status::StreamEnd {
             return Ok(found);
@@ -70,6 +71,19 @@ fn inflated(data: &[u8]) -> Result<Vec<u8>, String> {
             found.reserve_exact(found.capacity().min(MOST_INFLATED + 1 - found.len()));
         }
     }
+}
+
+pub fn inflated_into(data: &[u8], found: &mut [u8]) -> Result<(), String> {
+    let mut unpacking = Decompress::new(true);
+    let step = unpacking.decompress(data, found, FlushDecompress::Finish);
+    let status = told(step, NO_UNPACKING)?;
+    if status != Status::StreamEnd || taken(unpacking.total_out()) != found.len() {
+        return Err(format!("a packed list unpacks to other than {} bytes", found.len()));
+    }
+    if taken(unpacking.total_in()) != data.len() {
+        return Err(AFTER_END.to_owned());
+    }
+    Ok(())
 }
 
 pub fn unwrapped(data: &[u8]) -> Result<Cow<'_, [u8]>, String> {

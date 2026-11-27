@@ -1,5 +1,5 @@
 use crate::packed::{PACKED, unwrapped};
-use crate::segment::{Held, Passages, lengths_written};
+use crate::segment::{Held, Passages, lengths_read, lengths_written};
 use crate::tests::support::{
     AVERAGE, built, counts, decoded, long, refused, shown, small, table, taken, terms, wide, words,
 };
@@ -205,6 +205,34 @@ fn lengths_are_kept_by_id_in_blocks_of_consecutive_ids() -> Result<(), String> {
     assert_eq!(lengths(&found[2].1)?, [0, 0, 0, 0, 0, 0, 0, 5]);
     assert!(refused(lengths_written(&[1], &[], 3), "each chunk has a length"));
     assert!(refused(lengths_written(&[1], &[1], 21), "each chunk has a length"));
+    Ok(())
+}
+
+#[test]
+fn the_lengths_of_many_blocks_are_read_at_once_and_a_block_of_another_size_is_refused() -> Result<(), String> {
+    let ids: Vec<i64> = (0..800).collect();
+    let kept: Vec<u32> = (0..800).map(|each| each * 3 + 1).collect();
+    let written = lengths_written(&ids, &kept, 3)?;
+    let rows: Vec<&[u8]> = written.iter().map(|each| &each.1[..]).collect();
+    let read = lengths_read(&rows, 3)?;
+    let told: Vec<u32> = read
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|each| u32::from_le_bytes(*each))
+        .collect();
+    assert_eq!((rows.len(), told), (100, kept));
+    assert_eq!(lengths_read(&rows[98..], 3)?, read[98 * 32..]);
+    assert_eq!(lengths_read(&rows[..0], 3)?, Vec::<u8>::new());
+    for (shift, some) in [(4, &rows[..]), (2, &rows[..]), (4, &rows[..1]), (2, &rows[..1])] {
+        assert!(refused(lengths_read(some, shift), "unpacks to other than"));
+    }
+    let cut = &rows[0][..rows[0].len() - 4];
+    assert!(refused(lengths_read(&[cut], 3), "unpacks to other than 32 bytes"));
+    let longer: Vec<u8> = rows[0].iter().copied().chain([0]).collect();
+    assert!(refused(lengths_read(&[longer], 3), "bytes after its end"));
+    assert!(refused(lengths_read(&[b"junk"], 3), "does not unpack"));
+    assert!(refused(lengths_read(&rows, 21), "blocks of at most 2**20"));
     Ok(())
 }
 
