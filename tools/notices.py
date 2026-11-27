@@ -130,13 +130,13 @@ def current() -> str:
     return notices((crate, texts(crate)) for crate in linked(described))
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], shipped: Path = NOTICES) -> int:
     match argv:
         case ["--write", *files] if len(files) <= 1:
-            Path(*files or [NOTICES]).write_bytes(current().encode("utf-8"))
+            Path(*files or [shipped]).write_bytes(current().encode("utf-8"))
             return 0
         case [*files] if len(files) <= 1 and not any(each.startswith("-") for each in files):
-            file = Path(*files or [NOTICES])
+            file = Path(*files or [shipped])
             if file.is_file() and file.read_bytes() == current().encode("utf-8"):
                 return 0
             sys.stderr.write(f"error  {STALE.format(file=file)}\n")

@@ -99,5 +99,7 @@ def test_the_notices_shipped_are_those_of_the_crates_the_lock_names(
     assert stale.read_bytes() == NOTICES.read_bytes()
     assert (main([str(stale)]), capsys.readouterr().err) == (0, "")
     assert (main([str(tmp_path / "missing")]), capsys.readouterr().err.startswith("error  ")) == (1, True)
-    assert main(["--write"]) == 0
+    written = tmp_path / "written"
+    assert (main(["--write"], written), main([], written)) == (0, 0)
+    assert written.read_bytes() == NOTICES.read_bytes()
     assert (main(["--other"]), capsys.readouterr().err.startswith("usage: python -m tools notices")) == (2, True)
