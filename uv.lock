@@ -1794,6 +1794,7 @@ dependencies = [
     { name = "torchvision", version = "0.29.2", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
     { name = "torchvision", version = "0.29.2+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "transformers" },
+    { name = "triton-windows", marker = "sys_platform == 'win32'" },
     { name = "uvicorn" },
     { name = "xberg" },
 ]
@@ -1826,6 +1827,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.13", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", specifier = ">=0.28", index = "https://download.pytorch.org/whl/cpu" },
     { name = "transformers", specifier = ">=5.18" },
+    { name = "triton-windows", marker = "sys_platform == 'win32'", specifier = ">=3.9.0.post30" },
     { name = "uvicorn", specifier = ">=0.31" },
     { name = "xberg", specifier = ">=1.3" },
 ]
@@ -2056,6 +2058,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ee/3b/1680200d94d5e567443223dce26f9c6c26c6366ce5232981923c6c01e9d6/transformers-5.24.0.tar.gz", hash = "sha256:906cb8c3cb2123575e263962586a4d21a979ce97feeb95fe6aaf66fe6ae88bf3", size = 10751687, upload-time = "2026-11-21T12:24:32.616Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a4/6c/0a5b01b84e605e811f25d091262f199894c0839dcd7f2a289254cf7a16a7/transformers-5.24.0-py3-none-any.whl", hash = "sha256:ff5ebedf9359f94bb63772b6380eba6e7104d010cbbb2cb82c788817ea7486f6", size = 13549890, upload-time = "2026-11-21T12:24:29.434Z" },
+]
+
+[[package]]
+name = "triton-windows"
+version = "3.9.0.post30"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/6a/3a5cead030ced5cca03b550a193f90d9a082d6be9d9310d0c6cb6bcc216c/triton_windows-3.9.0.post30-cp312-abi3-win_amd64.whl", hash = "sha256:a3d0034649de95a8bb19bd805b33d230c87af5a031fa26bddbb56b490acc2436", size = 73158093, upload-time = "2026-10-28T02:38:48.539Z" },
+    { url = "https://files.pythonhosted.org/packages/45/87/f8610ecc3e492cd36de45a7bacfa2bacdc624d36d633035329724c94ed08/triton_windows-3.9.0.post30-cp312-abi3-win_arm64.whl", hash = "sha256:14efee65f0ae116996696fd3b22f8319002894d0772f8c6055f879fac814f0e1", size = 66273069, upload-time = "2026-10-28T02:38:57.057Z" },
 ]
 
 [[package]]
