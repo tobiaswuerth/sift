@@ -57,6 +57,9 @@ class Batches:
     postings_a_merge: int = 2_000_000
     bytes_a_merge: int = 64 << 20
     chunks_a_settle: int = 100_000
+    chunks_a_read: int = 1_000
+    chunks_a_read_beside: int = 250
+    readers: int = 8
     merging: Policy = POLICY
 
 
@@ -123,6 +126,12 @@ def read_only(path: Path, timeout: float = BUSY_TIMEOUT_SECONDS, *, immutable: b
     require_sqlite(sqlite3.sqlite_version_info)
     whole = uri(path.resolve(), "ro") + ("&immutable=1" if immutable else "")
     return sqlite3.connect(whole, uri=True, timeout=timeout, isolation_level=None, check_same_thread=False)
+
+
+def file_of(connection: sqlite3.Connection) -> Path:
+    attached = cast("list[tuple[int, str, str]]", connection.execute("PRAGMA database_list").fetchall())
+    (main,) = [file for _, name, file in attached if name == "main"]
+    return Path(main)
 
 
 def _refuse_without_a_log(connection: sqlite3.Connection, path: Path) -> None:

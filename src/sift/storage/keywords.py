@@ -15,7 +15,7 @@ from sift.domain.codec.segments import GAP, Building, WrittenSegment, building, 
 from sift.domain.codec.shape import FORMAT, SHAPE, Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.keyword_state import KeywordState, keyword_state, remaking
-from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, field_tokens, tokens
+from sift.domain.text.tokens import field_tokens, tokens
 from sift.storage.database import (
     BATCHES,
     Batches,
@@ -40,11 +40,9 @@ from sift.storage.keyword_meta import (
     drop_beside,
     fingerprint,
 )
+from sift.storage.keyword_reads import Passages, ReadParts, Span, read_ahead, read_in
 from sift.storage.keyword_writes import Head, rows_added, segment_added
-from sift.storage.texts import TextSpan, spans_text
 
-DOCUMENTS = """SELECT id, substr(title, 1, ?) AS title, substr(meta, 1, ?) AS meta FROM keyword_documents
-               WHERE id IN (SELECT value FROM json_each(?))"""
 REMAKE_REMEDY = "index the collection to remake it"
 STALE = "the store's keyword index is of another version of sift"
 UNFINISHED = "the store's keyword index is not yet wholly remade"
@@ -56,20 +54,6 @@ GONE = """INSERT INTO keyword_gone(term, segment, chunks) VALUES (?, ?, ?)
           ON CONFLICT(term, segment) DO UPDATE SET chunks = chunks + excluded.chunks"""
 DIGITS = re.compile("[0-9]{1,19}")
 MOST_ROW = (1 << 63) - 1
-TEXTS_AT_ONCE = 1000
-
-
-class Span(NamedTuple):
-    id: int
-    document: DocumentId
-    start: int
-    length: int
-
-
-class Named(NamedTuple):
-    id: int
-    title: str
-    meta: str | None
 
 
 class Range(NamedTuple):
@@ -125,37 +109,29 @@ def _tokens(streams: Sequence[Sequence[str]]) -> int:
     return sum(map(len, streams)) - 2 * len(streams)
 
 
-def _streams(transaction: Reading, spans: Sequence[Span]) -> Iterator[list[str]]:
-    wanted = json.dumps(sorted({span.document for span in spans}))
-    cut = MOST_FIELD_CHARACTERS + 1
-    documents = {held.id: held for held in rows(transaction, Named, DOCUMENTS, (cut, cut, wanted))}
-    named = {key: (field_tokens(held.title), field_tokens(held.meta or "")) for key, held in documents.items()}
+def _streams(transaction: WritingDocuments, spans: Sequence[Span]) -> Iterator[list[str]]:
     seen: dict[str, str] = {}
-    for at in range(0, len(spans), TEXTS_AT_ONCE):
-        part = spans[at : at + TEXTS_AT_ONCE]
-        cut = spans_text(transaction, [TextSpan(span.document, span.start, span.length) for span in part])
-        for span, text in zip(part, cut, strict=True):
-            title, meta = named[span.document]
-            yield stream(title, [seen.setdefault(each, each) for each in tokens(text)], meta)
+    with read_in(transaction, spans) as reads:
+        for read in reads:
+            named = {held.id: (field_tokens(held.title), field_tokens(held.meta or "")) for held in read.documents}
+            for span, text in zip(read.spans, read.texts, strict=True):
+                title, meta = named[span.document]
+                yield stream(title, [seen.setdefault(each, each) for each in tokens(text)], meta)
 
 
-def _taken(transaction: Reading, built: Building, spans: Sequence[Span]) -> int:
-    wanted = json.dumps(sorted({span.document for span in spans}))
-    cut = MOST_FIELD_CHARACTERS + 1
-    documents = rows(transaction, Named, DOCUMENTS, (cut, cut, wanted))
-    at = {held.id: number for number, held in enumerate(documents)}
-    fields = [(held.title, held.meta or "") for held in documents]
-    texts = spans_text(transaction, [TextSpan(span.document, span.start, span.length) for span in spans])
-    places = np.array([span.id for span in spans], np.int64)
-    return built.add(places, [at[span.document] for span in spans], fields, texts)
+def _taken(built: Building, read: Passages) -> int:
+    at = {held.id: number for number, held in enumerate(read.documents)}
+    fields = [(held.title, held.meta or "") for held in read.documents]
+    places = np.array([span.id for span in read.spans], np.int64)
+    return built.add(places, [at[span.document] for span in read.spans], fields, read.texts)
 
 
-def built_of(transaction: WritingDocuments, spans: Sequence[Span]) -> Building:
+def built_of(transaction: WritingDocuments, spans: Sequence[Span], reads: ReadParts) -> Building:
     built = building(transaction.batches.tokens_a_segment)
-    for start in range(0, len(spans), TEXTS_AT_ONCE):
-        part = spans[start : start + TEXTS_AT_ONCE]
-        if _taken(transaction, built, part) < len(part):
-            break
+    with reads(transaction, spans) as each:
+        for read in each:
+            if _taken(built, read) < len(read.spans):
+                break
     return built
 
 
@@ -167,7 +143,7 @@ def segment_written(transaction: Writing, built: Building, average: float, shape
     return made
 
 
-def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
+def _index_new(transaction: WritingDocuments, shape: Shape, reads: ReadParts) -> int:
     spans = rows(
         transaction,
         Span,
@@ -176,7 +152,7 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
     )
     if not spans:
         return 0
-    built = built_of(transaction, spans)
+    built = built_of(transaction, spans, reads)
     (indexed,) = rows(transaction, Count, "SELECT coalesce(sum(chunks - dead), 0) FROM keyword_segments")
     held = gathered(built)
     average = (totals(transaction).tokens + held.tokens) / (indexed.n + held.chunks)
@@ -188,7 +164,7 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
 
 def index_new(transaction: WritingDocuments) -> None:
     shape = shape_of(transaction)
-    while _index_new(transaction, shape):
+    while _index_new(transaction, shape, read_in):
         pass
     settled(transaction, shape)
 
@@ -202,7 +178,7 @@ def _owners(transaction: Writing, dead: Sequence[int]) -> list[int]:
     return [held[index].id for index in owners]
 
 
-def _forget(transaction: Writing, documents: Sequence[DocumentId]) -> None:
+def _forget(transaction: WritingDocuments, documents: Sequence[DocumentId]) -> None:
     spans = rows(
         transaction,
         Span,
@@ -303,7 +279,7 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
             if state is not KeywordState.REMAKING:
                 raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY, code=Problem.KEYWORDS_REMADE)
             shape = shape_of(transaction)
-            done += _index_new(transaction, shape)
+            done += _index_new(transaction, shape, read_ahead)
             settled(transaction, shape)
             whole = _done_if_whole(transaction, made)
         yield done

@@ -1,17 +1,20 @@
 import json
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence, Sized
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 from sift.api.ids import DocumentId
 from sift.domain.errors import DamagedError
-from sift.storage.database import Reading, Writing, first, rows, run_each, streamed
+from sift.storage.database import Reading, Value, Writing, first, rows, run_each, streamed
 
 BLOCK = 1 << 16
 NEWLINE = "\n"
 BLOCKS = """SELECT t.document, t.block, t.text
             FROM json_each(?) j JOIN texts t
               ON t.document = json_extract(j.value, '$[0]') AND t.block = json_extract(j.value, '$[1]')"""
+BLOCKS_AT_ONCE = """SELECT json_group_array(json_array(t.document, t.block, t.text))
+                    FROM json_each(?) j JOIN texts t
+                      ON t.document = json_extract(j.value, '$[0]') AND t.block = json_extract(j.value, '$[1]')"""
 WHOLE = "SELECT document, block, text FROM texts WHERE document = ? ORDER BY block"
 FROM_LINE = """SELECT first_line, text FROM texts
                WHERE document = ? AND block >= coalesce(
@@ -80,11 +83,11 @@ def _covering(span: TextSpan) -> range:
     return range(span.start // BLOCK, (span.start + max(span.length, 1) - 1) // BLOCK + 1)
 
 
-def spans_text(transaction: Reading, spans: Sequence[TextSpan]) -> list[str]:
-    wanted = sorted({(span.document, number) for span in spans for number in _covering(span)})
-    held = {
-        (found.document, found.block): found.text for found in rows(transaction, _Block, BLOCKS, (json.dumps(wanted),))
-    }
+def _wanted(spans: Sequence[TextSpan]) -> list[tuple[DocumentId, int]]:
+    return sorted({(span.document, number) for span in spans for number in _covering(span)})
+
+
+def _cut(spans: Sequence[TextSpan], wanted: Sized, held: Mapping[tuple[int, int], str]) -> list[str]:
     if len(held) < len(wanted):
         raise DamagedError("a chunk of the store reaches past the text of its document")
     cut: list[str] = []
@@ -93,6 +96,19 @@ def spans_text(transaction: Reading, spans: Sequence[TextSpan]) -> list[str]:
         at = span.start - covering.start * BLOCK
         cut.append("".join(held[span.document, number] for number in covering)[at : at + span.length])
     return cut
+
+
+def spans_text(transaction: Reading, spans: Sequence[TextSpan]) -> list[str]:
+    wanted = _wanted(spans)
+    found = rows(transaction, _Block, BLOCKS, (json.dumps(wanted),))
+    return _cut(spans, wanted, {(each.document, each.block): each.text for each in found})
+
+
+def spans_text_at_once(transaction: Reading, spans: Sequence[TextSpan]) -> list[str]:
+    wanted = _wanted(spans)
+    (found,) = rows(transaction, Value, BLOCKS_AT_ONCE, (json.dumps(wanted),))
+    blocks = cast("list[tuple[int, int, str]]", json.loads(found.value))
+    return _cut(spans, wanted, {(document, block): text for document, block, text in blocks})
 
 
 def line_count(transaction: Reading, document: DocumentId) -> int:

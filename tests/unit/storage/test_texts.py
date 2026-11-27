@@ -3,7 +3,7 @@ import itertools
 import re
 import sqlite3
 import tracemalloc
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from typing import NamedTuple
 
 import pytest
@@ -24,6 +24,7 @@ from sift.storage.texts import (
     lines_between,
     put_text,
     spans_text,
+    spans_text_at_once,
     text_of,
 )
 from tests.texts import runs_joined
@@ -109,11 +110,29 @@ def test_a_text_kept_in_blocks_reads_back_whole_in_spans_and_in_lines(text: str,
             assert line_at(transaction, DOCUMENT, first) == text.split("\n")[first - 1]
 
 
-def test_a_chunk_reaching_past_its_text_is_damage() -> None:
+odd_texts = st.lists(
+    st.tuples(st.sampled_from(["a", "\x01", "\x1f", '"', "\\", "\N{GRINNING FACE}", "\n"]), st.integers(1, BLOCK + 2)),
+    min_size=1,
+    max_size=6,
+).map(runs_joined)
+
+
+@given(odd_texts, st.data())
+def test_spans_read_at_once_are_the_spans_read_row_by_row(text: str, data: st.DataObject) -> None:
+    starts = data.draw(st.lists(st.integers(0, len(text) - 1), min_size=1, max_size=6))
+    spans = [TextSpan(DOCUMENT, start, data.draw(st.integers(0, len(text) - start))) for start in starts]
+    with held(text) as transaction:
+        cut = [text[span.start : span.start + span.length] for span in spans]
+        assert spans_text(transaction, spans) == cut
+        assert spans_text_at_once(transaction, spans) == cut
+
+
+@pytest.mark.parametrize("read", [spans_text, spans_text_at_once])
+def test_a_chunk_reaching_past_its_text_is_damage(read: Callable[[Reading, list[TextSpan]], list[str]]) -> None:
     with held("a" * (BLOCK + 3)) as transaction:
         run(Writing(transaction.connection), "DELETE FROM texts WHERE block = 1")
         with pytest.raises(DamagedError, match="past the text of its document"):
-            spans_text(transaction, [TextSpan(DOCUMENT, BLOCK - 1, 3)])
+            read(transaction, [TextSpan(DOCUMENT, BLOCK - 1, 3)])
 
 
 def test_an_empty_text_has_no_block_and_no_line() -> None:
