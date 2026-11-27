@@ -28,13 +28,16 @@ DIGITS = re.compile("[0-9]+")
 APPENDED = "a"
 
 
+MOST_LOGS_KEPT = 20
+
+
 class Handlers(Protocol):
     RotatingFileHandler: Callable[[Path, str, int, int, str], logging.Handler]
 
 
 @dataclass(frozen=True, slots=True)
 class LogLimits:
-    kept: int = 20
+    kept: int = MOST_LOGS_KEPT
     most_bytes: int = 16 << 20
 
 

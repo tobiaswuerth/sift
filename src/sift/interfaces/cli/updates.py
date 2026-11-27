@@ -19,8 +19,8 @@ from sift.interfaces.console.shell import command
 PYPI = f"https://pypi.org/pypi/{PACKAGE}/json"
 STATE = "update.json"
 DAY = 24 * 3600.0
-TIMEOUT = 3.0
-DEADLINE = 5.0
+TIMEOUT_SECONDS = 3.0
+DEADLINE_SECONDS = 5.0
 MOST_BYTES = 32 << 20
 VERSION = re.compile(r"([0-9]{1,9}(?:\.[0-9]{1,9})*)(?:(a|b|rc)([0-9]{1,9}))?")
 PHASES = MappingProxyType({"a": 0, "b": 1, "rc": 2})
@@ -120,7 +120,7 @@ def fetched(url: str, installed: str) -> str:
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in CONNECTIONS or not parts.hostname:
         raise ValueError(f"{url} is no web address")
-    connection = CONNECTIONS[parts.scheme](parts.hostname, parts.port, timeout=TIMEOUT)
+    connection = CONNECTIONS[parts.scheme](parts.hostname, parts.port, timeout=TIMEOUT_SECONDS)
     try:
         connection.request("GET", parts.path or "/", headers={"User-Agent": f"sift/{installed}"})
         response = connection.getresponse()
@@ -146,7 +146,7 @@ class Checking:
     pip: Callable[[], bool] = _has_pip
     python: str = sys.executable
     platform: str = sys.platform
-    deadline: float = DEADLINE
+    deadline: float = DEADLINE_SECONDS
 
 
 CHECKING = Checking()

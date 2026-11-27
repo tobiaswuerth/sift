@@ -46,12 +46,20 @@ def _assigned(node: ast.stmt) -> Iterator[tuple[ast.expr, ast.expr]]:
         yield from _pairs(node.target, node.value)
 
 
+def _named(nodes: list[ast.stmt], owner: str = "") -> Iterator[tuple[str, ast.expr]]:
+    for node in nodes:
+        for target, value in _assigned(node):
+            if isinstance(target, ast.Name):
+                yield owner + target.id, value
+        if isinstance(node, ast.ClassDef) and not owner:
+            yield from _named(node.body, f"{node.name}.")
+
+
 def limits_in(module: str, source: str) -> list[Limit]:
     return [
-        Limit(module, target.id, ast.get_source_segment(source, value) or ast.unparse(value))
-        for node in ast.parse(source).body
-        for target, value in _assigned(node)
-        if isinstance(target, ast.Name) and BOUND.fullmatch(target.id)
+        Limit(module, name, ast.get_source_segment(source, value) or ast.unparse(value))
+        for name, value in _named(ast.parse(source).body)
+        if BOUND.fullmatch(name.rpartition(".")[2].upper())
     ]
 
 

@@ -22,10 +22,20 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.app.bench` | `MOST_FILE_BYTES` | `64 << 20` |
 | `sift.app.bench` | `MOST_NESTING` | `8` |
 | `sift.app.documents` | `MOST_LISTED` | `5` |
+| `sift.app.embedding` | `FEWEST_COMPILED` | `20_000` |
+| `sift.app.filing` | `Limits.most_record_characters` | `MOST_RECORD_CHARACTERS` |
+| `sift.app.filing` | `Limits.most_file_bytes` | `MOST_FILE_BYTES` |
+| `sift.app.filing` | `Limits.most_description_bytes` | `MOST_DESCRIPTION_BYTES` |
+| `sift.app.filing` | `Limits.most_files_a_write` | `1000` |
+| `sift.app.filing` | `Limits.most_bytes_a_write` | `64 << 20` |
+| `sift.app.filing` | `Limits.most_records_a_write` | `20_000` |
+| `sift.app.filing` | `Limits.most_characters_a_write` | `64 << 20` |
 | `sift.app.importing` | `KEY_BYTES` | `8` |
 | `sift.app.kept_decoded` | `KEPT_BYTES` | `512 << 20` |
 | `sift.app.kept_decoded` | `ENTRY_BYTES` | `512` |
 | `sift.app.problems` | `MOST_NAMED` | `3` |
+| `sift.app.questions` | `MOST_QUESTIONS` | `256` |
+| `sift.app.scans` | `Scanning.most_pages` | `MOST_PAGES` |
 | `sift.app.vector_candidates` | `MOST_WIDER` | `WIDER**2` |
 | `sift.domain.codec.codes` | `WORD_BYTES` | `8` |
 | `sift.domain.codec.codes` | `MOST_BITS` | `int(np.iinfo(np.uint16).max)` |
@@ -61,6 +71,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.domain.text.notes` | `MOST_HEAD` | `1 << 20` |
 | `sift.domain.text.notes` | `DIGEST_BYTES` | `16` |
 | `sift.domain.text.records` | `MOST_RECORD_CHARACTERS` | `64 << 20` |
+| `sift.domain.text.scans` | `MOST_PAGES` | `50` |
 | `sift.domain.text.tokens` | `MOST_FIELD_CHARACTERS` | `1 << 20` |
 | `sift.inference.accelerator` | `LEAST_BUDGET` | `2 * GIB` |
 | `sift.inference.batches` | `WAITED_SECONDS` | `600.0` |
@@ -81,6 +92,13 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.ingest.sandbox` | `MOST_WORKERS` | `30` |
 | `sift.ingest.sandbox` | `MOST_ANSWER_BYTES` | `2 << 30` |
 | `sift.ingest.sandbox` | `HEARD_SECONDS` | `1.0` |
+| `sift.ingest.sandbox` | `Patience.base_seconds` | `600.0` |
+| `sift.ingest.sandbox` | `Patience.start_seconds` | `120.0` |
+| `sift.ingest.sandbox` | `Patience.stop_seconds` | `10.0` |
+| `sift.interfaces.cli.logs` | `MOST_LOGS_KEPT` | `20` |
+| `sift.interfaces.cli.logs` | `LogLimits.most_bytes` | `16 << 20` |
+| `sift.interfaces.cli.updates` | `TIMEOUT_SECONDS` | `3.0` |
+| `sift.interfaces.cli.updates` | `DEADLINE_SECONDS` | `5.0` |
 | `sift.interfaces.cli.updates` | `MOST_BYTES` | `32 << 20` |
 | `sift.interfaces.cli.written` | `MOST_BRACKETS` | `64` |
 | `sift.interfaces.console.live` | `REDRAW_SECONDS` | `0.1` |
@@ -106,20 +124,33 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.interfaces.server.proxy` | `STARTING_SECONDS` | `60.0` |
 | `sift.interfaces.server.proxy` | `LOOK_EVERY_SECONDS` | `0.05` |
 | `sift.interfaces.server.proxy` | `QUIET_SECONDS` | `600.0` |
+| `sift.interfaces.server.results` | `MOST_RESULTS` | `32` |
+| `sift.interfaces.server.results` | `MOST_KEPT_HITS` | `1000` |
+| `sift.interfaces.server.results` | `KeptResults.most_hits` | `MOST_KEPT_HITS` |
 | `sift.interfaces.server.serving` | `IDLE_CHECK_SECONDS` | `30.0` |
 | `sift.interfaces.server.serving` | `STOP_SECONDS` | `5.0` |
 | `sift.interfaces.server.serving` | `GRACE_SECONDS` | `10` |
 | `sift.interfaces.server.serving` | `KEEP_ALIVE_SECONDS` | `5` |
 | `sift.interfaces.server.serving` | `MOST_CONNECTIONS` | `256` |
+| `sift.interfaces.server.serving` | `Serve.grace_seconds` | `GRACE_SECONDS` |
+| `sift.interfaces.server.serving` | `Serve.keep_alive_seconds` | `KEEP_ALIVE_SECONDS` |
+| `sift.interfaces.server.serving` | `Serve.most_connections` | `MOST_CONNECTIONS` |
 | `sift.interfaces.worker.app` | `MOST_BODY` | `32 << 20` |
 | `sift.interfaces.worker.app` | `MOST_NESTING` | `4` |
 | `sift.interfaces.worker.keys` | `TOKEN_BYTES` | `32` |
 | `sift.interfaces.worker.serving` | `GRACE_SECONDS` | `10` |
 | `sift.interfaces.worker.serving` | `KEEP_ALIVE_SECONDS` | `5` |
 | `sift.interfaces.worker.serving` | `MOST_CONNECTIONS` | `64` |
+| `sift.interfaces.worker.serving` | `Lend.grace_seconds` | `GRACE_SECONDS` |
+| `sift.interfaces.worker.serving` | `Lend.keep_alive_seconds` | `KEEP_ALIVE_SECONDS` |
+| `sift.retrieval.keyword.search` | `Tuning.most_batch` | `4096` |
+| `sift.retrieval.keyword.search` | `Tuning.most_read` | `10_000_000` |
+| `sift.retrieval.keyword.search` | `Tuning.most_expansions` | `100_000` |
+| `sift.retrieval.vector.nearest` | `MOST_RESCORED` | `1000` |
 | `sift.storage.catalog` | `MOST_NAME` | `100` |
 | `sift.storage.database` | `BUSY_TIMEOUT_SECONDS` | `30` |
 | `sift.storage.database` | `WAL_LIMIT_BYTES` | `64 << 20` |
+| `sift.storage.database` | `LEAST_SQLITE` | `(3, 38, 0)` |
 | `sift.storage.database` | `MOST_VARIABLES` | `32_766` |
 | `sift.storage.documents` | `MOST_DESCRIPTION_BYTES` | `512 << 20` |
 | `sift.storage.kept_vectors` | `KEY_BYTES` | `16` |

@@ -17,7 +17,7 @@ WAL_LIMIT_BYTES = 64 << 20
 CACHE_KIBIBYTES = 256 << 10
 READ_CACHE_KIBIBYTES = 16 << 10
 DAMAGED = frozenset({sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB})
-MINIMUM_SQLITE = (3, 38, 0)
+LEAST_SQLITE = (3, 38, 0)
 STREAMED = 10_000
 MOST_VARIABLES = 32_766
 CACHE = f"PRAGMA cache_size = -{CACHE_KIBIBYTES}"
@@ -83,8 +83,8 @@ def primary_code(error: sqlite3.Error) -> int:
 
 
 def require_sqlite(version: tuple[int, int, int]) -> None:
-    if version < MINIMUM_SQLITE:
-        found, needed = (".".join(map(str, numbers)) for numbers in (version, MINIMUM_SQLITE))
+    if version < LEAST_SQLITE:
+        found, needed = (".".join(map(str, numbers)) for numbers in (version, LEAST_SQLITE))
         raise StoreUnavailableError(
             f"this Python was built with SQLite {found}, which lacks what sift's stores need",
             f"run sift on a Python with SQLite {needed} or newer, as uv, python.org and Homebrew install",

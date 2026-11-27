@@ -28,13 +28,14 @@ from sift.storage.writer import sole_writer
 
 RESET_ALL_REMEDY = "embed again with reset, naming no collection"
 BROKEN_REMEDY = "embed again; if they stay, the model fails on their text"
+FEWEST_COMPILED = 20_000
 
 
 @dataclass(frozen=True, slots=True)
 class Embedding:
     chunks_a_call: int = 1024
     chunks_a_read: int = 16_384
-    compile_from: int = 20_000
+    compile_from: int = FEWEST_COMPILED
 
 
 EMBEDDING = Embedding()

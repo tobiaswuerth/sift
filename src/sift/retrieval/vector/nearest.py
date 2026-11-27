@@ -25,7 +25,7 @@ from sift.domain.codec.codes import (
 )
 from sift.retrieval.allowed import AllowedChunks
 
-RESCORE = 1000
+MOST_RESCORED = 1000
 SHORTLIST = 10
 CODES_AXES = 2
 SCAN_SHARE = 0.2
@@ -235,7 +235,9 @@ def _refuse(held: Sequence[Coded], query: Floats, k: int) -> None:
         raise ValueError(f"the query has {len(query):,} dimensions, unlike the vectors: embed it with their model")
 
 
-def nearest(held: Sequence[Coded], query: Floats, k: int, reads: Reads, rescore: int = RESCORE) -> tuple[Near, ...]:
+def nearest(
+    held: Sequence[Coded], query: Floats, k: int, reads: Reads, rescore: int = MOST_RESCORED
+) -> tuple[Near, ...]:
     _refuse(held, query, k)
     if not k:
         return ()

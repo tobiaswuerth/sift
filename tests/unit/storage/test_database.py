@@ -7,7 +7,7 @@ import pytest
 
 from sift.api.errors import StoreUnavailableError
 from sift.storage.database import (
-    MINIMUM_SQLITE,
+    LEAST_SQLITE,
     WAL_LIMIT_BYTES,
     connect,
     first,
@@ -242,8 +242,8 @@ def test_a_store_where_sqlite_keeps_no_write_ahead_log_is_refused_saying_where_t
 
 
 def test_an_sqlite_older_than_sift_needs_is_refused_with_what_to_do() -> None:
-    require_sqlite(MINIMUM_SQLITE)
-    require_sqlite((MINIMUM_SQLITE[0], MINIMUM_SQLITE[1] + 1, 0))
+    require_sqlite(LEAST_SQLITE)
+    require_sqlite((LEAST_SQLITE[0], LEAST_SQLITE[1] + 1, 0))
     with pytest.raises(StoreUnavailableError, match=r"SQLite 3\.37\.2") as refused:
         require_sqlite((3, 37, 2))
     assert (

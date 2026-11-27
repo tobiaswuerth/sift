@@ -7,7 +7,7 @@ from sift.domain.text.chunks import chunks
 from sift.domain.text.markdown import heading
 from sift.domain.text.notes import Document, storable, title_field
 
-PAGES = 50
+MOST_PAGES = 50
 DPI, LONGEST, SHORTEST = 200, 1540, 28
 POINTS_AN_INCH = 72
 LOOP_LINES = 10

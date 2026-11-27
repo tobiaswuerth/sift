@@ -8,13 +8,13 @@ from sift.domain.codec.codes import Floats, Halves
 from sift.inference.models import Models
 from sift.inference.prepared import ModelsPrepared
 
-QUESTIONS = 256
+MOST_QUESTIONS = 256
 
 
 @dataclass(slots=True, eq=False)
 class RememberedQuestions:
     models: Models
-    kept: int = QUESTIONS
+    kept: int = MOST_QUESTIONS
     vectors: OrderedDict[str, Halves] = field(default_factory=OrderedDict[str, Halves])
     lock: threading.Lock = field(default_factory=threading.Lock)
 

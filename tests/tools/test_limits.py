@@ -21,16 +21,30 @@ def f() -> None:
 
 class C:
     MOST_FIELD = 2
+    most_read: int = 10_000
+    start_seconds: float = 1.5
+    bytes_a_second: float = 9.0
+    kept: int = 3
+
+    def g(self) -> None:
+        most_local = 4
+
+
+AFTER_BYTES = 1
 """
 
 
-def test_bounds_are_the_module_constants_named_as_bounds_with_their_values_as_written() -> None:
+def test_bounds_are_the_module_constants_and_class_fields_named_as_bounds_with_their_values_as_written() -> None:
     assert limits_in("sift.a", SOURCE) == [
         Limit("sift.a", "MOST_ITEMS", "1_000"),
         Limit("sift.a", "WAIT_SECONDS", "2.5"),
         Limit("sift.a", "KEPT_BYTES", "64 << 20"),
         Limit("sift.a", "FEWEST_WORDS", "2"),
         Limit("sift.a", "LEAST_SHARE", "0.1"),
+        Limit("sift.a", "C.MOST_FIELD", "2"),
+        Limit("sift.a", "C.most_read", "10_000"),
+        Limit("sift.a", "C.start_seconds", "1.5"),
+        Limit("sift.a", "AFTER_BYTES", "1"),
     ]
 
 

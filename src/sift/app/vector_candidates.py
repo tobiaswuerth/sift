@@ -16,7 +16,7 @@ from sift.domain.rank.best import Best, offered, ranked
 from sift.domain.text.wording import counted
 from sift.inference.models import Models
 from sift.retrieval.allowed import AllowedChunks
-from sift.retrieval.vector.nearest import RESCORE, Near, Reads, nearest
+from sift.retrieval.vector.nearest import MOST_RESCORED, Near, Reads, nearest
 from sift.storage.columns import documents_of
 from sift.storage.database import Reading
 from sift.storage.passing import Passing
@@ -38,7 +38,7 @@ class Rescoring:
     count: Callable[[Reading], int] = documents_embedded
 
 
-RESCORING = Rescoring(RESCORE, vectors_of)
+RESCORING = Rescoring(MOST_RESCORED, vectors_of)
 
 
 def query_vector(models: Models, text: str) -> Floats:

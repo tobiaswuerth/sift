@@ -6,8 +6,8 @@ from typing import NamedTuple
 from sift.api.search import SearchResult
 from sift.storage.watching import Seen
 
-RESULTS = 32
-KEPT_HITS = 1000
+MOST_RESULTS = 32
+MOST_KEPT_HITS = 1000
 
 
 class Moment(NamedTuple):
@@ -17,8 +17,8 @@ class Moment(NamedTuple):
 
 @dataclass(slots=True, eq=False)
 class KeptResults:
-    kept: int = RESULTS
-    most_hits: int = KEPT_HITS
+    kept: int = MOST_RESULTS
+    most_hits: int = MOST_KEPT_HITS
     answers: OrderedDict[str, tuple[SearchResult, Moment]] = field(
         default_factory=OrderedDict[str, tuple[SearchResult, Moment]]
     )

@@ -8,7 +8,7 @@ from sift.api.errors import ModelUnavailableError
 from sift.api.events import Noted, Reporter
 from sift.domain.text.documents import FileRead, Refused, Scan
 from sift.domain.text.notes import Document
-from sift.domain.text.scans import PAGES, OcrSetting, read_scan
+from sift.domain.text.scans import MOST_PAGES, OcrSetting, read_scan
 from sift.inference.hub import OCR_MODEL
 from sift.inference.loading import OcrModule, ocr_module
 from sift.ingest.pictured import Pages, ToPicture
@@ -33,7 +33,7 @@ class Scanning:
     setting: OcrSetting = OcrSetting.AUTO
     module: Callable[[], OcrModule] = ocr_module
     pictures: OpenPicturing = picturing
-    most_pages: int = PAGES
+    most_pages: int = MOST_PAGES
     gpus: str | None = None
 
 

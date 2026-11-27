@@ -19,7 +19,7 @@ from sift.app.filing import Readers
 from sift.app.indexing import index
 from sift.app.scans import BUSY, FULL, GPU_UNUSED, NO_GPU, NO_TEXT_FOUND, NOT_LOADED, OFF, Scanning
 from sift.domain.text.documents import Again, Conversion, Refused, Unread
-from sift.domain.text.scans import OCR_FIELD, PAGES, OcrSetting
+from sift.domain.text.scans import MOST_PAGES, OCR_FIELD, OcrSetting
 from sift.inference.accelerator import CPU, HIDDEN, Device
 from sift.inference.hub import OCR_MODEL
 from sift.inference.ocr import Generating, Ocr, Processing
@@ -110,7 +110,7 @@ def scans(tmp_path: Path, home: Path) -> Path:
     return root
 
 
-def scanning(ocr: FakeOcr, setting: OcrSetting = OcrSetting.AUTO, pages: int = PAGES) -> Scanning:
+def scanning(ocr: FakeOcr, setting: OcrSetting = OcrSetting.AUTO, pages: int = MOST_PAGES) -> Scanning:
     return Scanning(setting, lambda: ocr, pictured_here, pages)
 
 

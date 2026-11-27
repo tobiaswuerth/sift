@@ -13,7 +13,7 @@ from sift.api.notices import Notice
 from sift.api.search import Hit, SearchKeywords, SearchResult
 from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.server.handled import HANDLED, Handled, handled
-from sift.interfaces.server.results import KEPT_HITS, RESULTS
+from sift.interfaces.server.results import MOST_KEPT_HITS, MOST_RESULTS
 from sift.settings import Settings
 from sift.storage.store_files import CATALOG
 from tests.damage import damage_pages
@@ -64,7 +64,7 @@ def test_a_search_asked_again_is_answered_from_memory_until_the_home_is_written(
     [
         SearchResult((), 1, (), partial=True, scored_by="keywords"),
         SearchResult((), 1, (UNSEARCHED,), scored_by="keywords"),
-        SearchResult((HIT,) * (KEPT_HITS + 1), 1, (), scored_by="keywords"),
+        SearchResult((HIT,) * (MOST_KEPT_HITS + 1), 1, (), scored_by="keywords"),
     ],
 )
 def test_an_answer_cut_short_passing_a_store_over_or_too_large_is_not_kept(
@@ -92,17 +92,17 @@ def test_an_answer_whose_search_noted_something_along_the_way_is_not_kept_one_th
 def test_only_the_latest_answers_are_kept(settings: Settings) -> None:
     ran = list[str]()
     with running(settings, answering([SearchResult((HIT,), 1, (), scored_by="keywords")], ran)) as server:
-        for n in [*range(RESULTS + 1), RESULTS, 0]:
+        for n in [*range(MOST_RESULTS + 1), MOST_RESULTS, 0]:
             asked(server, "search", {"query": f"q{n}"})
-    assert ran == [*(f"q{n}" for n in range(RESULTS + 1)), "q0"]
+    assert ran == [*(f"q{n}" for n in range(MOST_RESULTS + 1)), "q0"]
 
 
 def test_an_answer_asked_again_is_kept_as_the_latest(settings: Settings) -> None:
     ran = list[str]()
     with running(settings, answering([SearchResult((HIT,), 1, (), scored_by="keywords")], ran)) as server:
-        for n in [*range(RESULTS), 0, RESULTS, 0, 1]:
+        for n in [*range(MOST_RESULTS), 0, MOST_RESULTS, 0, 1]:
             asked(server, "search", {"query": f"q{n}"})
-    assert ran == [*(f"q{n}" for n in range(RESULTS)), f"q{RESULTS}", "q1"]
+    assert ran == [*(f"q{n}" for n in range(MOST_RESULTS)), f"q{MOST_RESULTS}", "q1"]
 
 
 def test_answers_are_kept_again_once_a_write_is_done(settings: Settings, notes: Path) -> None:

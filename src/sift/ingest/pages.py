@@ -2,7 +2,7 @@ import io
 
 import pypdfium2
 
-from sift.domain.text.scans import PAGES, page_scale
+from sift.domain.text.scans import MOST_PAGES, page_scale
 from sift.ingest.pictured import Pages, Pictured, Unpictured
 
 PICTURED_AS = "PNG"
@@ -31,7 +31,7 @@ def _all_pages(pdf: pypdfium2.PdfDocument, most: int) -> Pictured:
         return Unpictured(str(error))
 
 
-def pages(raw: bytes, most: int = PAGES) -> Pictured:
+def pages(raw: bytes, most: int = MOST_PAGES) -> Pictured:
     try:
         pdf = pypdfium2.PdfDocument(raw)
     except pypdfium2.PdfiumError as error:
