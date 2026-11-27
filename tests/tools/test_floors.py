@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from importlib import metadata
+
 import pytest
 
 from tools.findings import Finding
@@ -26,6 +29,24 @@ def test_a_dependency_installed_above_its_lowest_version_is_named_with_its_line(
         Finding("pyproject.toml", 4, "torch 2.15.0+cpu is installed, not its lowest version 2.13"),
         Finding("pyproject.toml", 6, "uvicorn 0.54.0 is installed, not its lowest version 0.31"),
     ]
+
+
+def installed_of(versions: dict[str, str]) -> Callable[[str], str]:
+    def installed(name: str) -> str:
+        if name not in versions:
+            raise metadata.PackageNotFoundError(name)
+        return versions[name]
+
+    return installed
+
+
+def test_a_dependency_of_another_platform_is_passed_over_as_it_is_not_installed_and_one_of_all_is_not() -> None:
+    project = (
+        """[project]\ndependencies = [\n    "numpy>=2.0",\n    "elsewhere>=1.0; sys_platform == 'nowhere'",\n]\n"""
+    )
+    assert unmet(project, installed_of({"numpy": "2.0"})) == []
+    with pytest.raises(metadata.PackageNotFoundError):
+        unmet('[project]\ndependencies = ["missing>=1.0"]\n', installed_of({}))
 
 
 def test_a_dependency_without_a_lowest_version_or_that_names_no_package_is_a_finding_not_passed_over() -> None:

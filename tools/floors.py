@@ -32,15 +32,23 @@ def _dependencies(project: str) -> list[str]:
 
 
 def _said(requirement: str, installed: Callable[[str], str]) -> Iterator[str]:
-    found = REQUIREMENT.fullmatch(requirement.partition(";")[0])
+    named, _, marker = requirement.partition(";")
+    found = REQUIREMENT.fullmatch(named)
     if found is None:
         yield UNREAD.format(requirement=requirement)
         return
     name, floor = found[1], FLOOR.search(found[2])
     if floor is None:
         yield NO_FLOOR.format(name=name)
-    elif _release(installed(name)) != _release(floor[1]):
-        yield ABOVE.format(name=name, held=installed(name), floor=floor[1])
+        return
+    try:
+        held = installed(name)
+    except metadata.PackageNotFoundError:
+        if marker.strip():
+            return
+        raise
+    if _release(held) != _release(floor[1]):
+        yield ABOVE.format(name=name, held=held, floor=floor[1])
 
 
 def unmet(project: str, installed: Callable[[str], str]) -> list[Finding]:
