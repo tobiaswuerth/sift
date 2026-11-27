@@ -38,7 +38,6 @@ class WrittenSegment:
     average: float
     filed: FiledLists
     lengths: Sequence[tuple[int, int, bytes]]
-    terms: Sequence[tuple[str, int]]
 
 
 class PackedList(NamedTuple):
@@ -122,6 +121,13 @@ def unpacked(lists: bytes, places: bytes | None, terms: Sequence[str]) -> list[P
         raise DamagedError(str(error)) from None
 
 
+def counted(packs: Sequence[bytes], low: str, high: str | None) -> list[tuple[str, int]]:
+    try:
+        return _native.counted(packs, low, high)
+    except ValueError as error:
+        raise DamagedError(str(error)) from None
+
+
 class Collected(NamedTuple):
     first: int
     last: int
@@ -138,6 +144,5 @@ def gathered(built: Building) -> Collected:
 
 def written(built: Building, segment: int, average: float, shape: Shape = SHAPE) -> WrittenSegment:
     held = gathered(built)
-    found, lengths, terms = built.written(segment, average, _shaped(shape))
-    filed = FiledLists(*found)
-    return WrittenSegment(held.first, held.last, held.chunks, held.tokens, average, filed, lengths, terms)
+    found, lengths = built.written(segment, average, _shaped(shape))
+    return WrittenSegment(held.first, held.last, held.chunks, held.tokens, average, FiledLists(*found), lengths)

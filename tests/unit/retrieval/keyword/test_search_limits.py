@@ -201,7 +201,7 @@ def test_a_prefix_of_more_words_than_a_search_expands_is_refused() -> None:
     notes: Round = {"a.md": ("", "A", "w1 w10 w11"), "b.md": ("", "B", "w12")}
     with collections([[notes]]) as (stores, _):
         assert len(search(stores, Prefix("w1"), 10, tuning=Tuning(most_expansions=4))) == 2
-        refusal = r"w1\* stands for 4 words, more than the 3 a search expands"
+        refusal = r"w1\* stands for at least 4 words, more than the 3 a search expands"
         with pytest.raises(InvalidRequestError, match=refusal) as refused:
             search(stores, Prefix("w1"), 10, tuning=Tuning(most_expansions=3))
         assert refused.value.remedy == "write more of the word before the *"

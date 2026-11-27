@@ -1,4 +1,4 @@
-use crate::packs::{Pack, Packer, entries};
+use crate::packs::{Pack, Packer, counted, entries};
 use crate::tests::support::refused;
 
 const PACK_BYTES: usize = 4000;
@@ -107,5 +107,33 @@ fn a_damaged_pack_is_refused() -> Result<(), String> {
     placed.push(0);
     assert!(refused(entries(&longer, Some(&pack.places)), "a pack of lists"));
     assert!(refused(entries(&pack.lists, Some(&placed)), "a pack of lists"));
+    Ok(())
+}
+
+#[test]
+fn the_terms_of_a_pack_within_bounds_are_told_with_their_passages_whatever_follows_its_head() -> Result<(), String> {
+    let mut packer = Packer::default();
+    packer.push("alpha", 2, Some((&[0, 7, 7], &[0, 9])))?;
+    packer.push("beta", 5000, None)?;
+    packer.push("betz", 4, Some((&[1], &[2])))?;
+    packer.push("m\u{fc}ller", 1, Some((&[1, 3], &[1, 4, 4, 4])))?;
+    let Some(pack) = packer.finished()? else {
+        return Err("a packer that took lists hands back a pack".to_owned());
+    };
+    let every = [("alpha", 2), ("beta", 5000), ("betz", 4), ("m\u{fc}ller", 1)];
+    assert_eq!(counted(&pack.lists, "", None)?, every);
+    assert_eq!(counted(&pack.lists, "bet", Some("beu"))?, every[1..3]);
+    assert_eq!(counted(&pack.lists, "beta", Some("betz"))?, every[1..2]);
+    assert_eq!(counted(&pack.lists, "m", Some("n"))?, every[3..]);
+    assert_eq!(counted(&pack.lists, "n", None)?, every[..0]);
+    assert_eq!(counted(&pack.lists, "a", Some("alpha"))?, every[..0]);
+    let bodies = pack.lists.len() - 6;
+    assert_eq!(counted(&pack.lists[..bodies], "", None)?, every);
+    for cut in [0, 3, 4, 9, bodies - 3] {
+        assert!(
+            refused(counted(&pack.lists[..cut], "", None), "a pack of lists"),
+            "{cut}"
+        );
+    }
     Ok(())
 }

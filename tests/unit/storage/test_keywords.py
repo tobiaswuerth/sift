@@ -11,15 +11,16 @@ from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Policy
 from sift.domain.text.notes import note
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS
-from sift.storage.database import BATCHES, Batches, reading, rows, run, writing
+from sift.storage.database import BATCHES, Batches, Count, reading, rows, run, writing
 from sift.storage.documents import add_documents, put_source
-from sift.storage.keyword_lists import dead_within, expansions, frequencies, segments
+from sift.storage.keyword_lists import dead_within, gone, prefixed, segments
 from sift.storage.keywords import totals, writing_documents
 from tests.examples import few
 from tests.keyword_indexes import (
     Average,
     Sized,
     checked,
+    frequencies,
     generation_of,
     rounds,
 )
@@ -69,12 +70,69 @@ def test_a_prefix_expands_to_the_terms_it_begins() -> None:
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
         applied(connection, [{"a.md": ("", "x", "super superb superconduct supra s")}])
         with reading(connection) as transaction:
-            assert expansions(transaction, "super") == ["super", "superb", "superconduct"]
-            assert expansions(transaction, "s") == ["s", "super", "superb", "superconduct", "supra"]
-            assert expansions(transaction, "zz") == []
-            assert expansions(transaction, chr(0x10FFFF)) == []
-            assert expansions(transaction, "a" + chr(0x10FFFF)) == []
-            assert expansions(transaction, chr(0xD7FF)) == []
+            assert prefixed(transaction, "super", EVERY) == {"super": 1, "superb": 1, "superconduct": 1}
+            assert sorted(prefixed(transaction, "s", EVERY)) == ["s", "super", "superb", "superconduct", "supra"]
+            for none in ("zz", chr(0x10FFFF), "a" + chr(0x10FFFF), chr(0xD7FF)):
+                assert prefixed(transaction, none, EVERY) == {}
+
+
+KEEPING = Batches(merging=Policy(dead_share=0.99))
+EVERY = 1 << 62
+
+
+def test_a_term_counts_its_live_passages_alone_and_what_a_segment_counted_gone_leaves_with_it() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        both: Round = {"a.md": ("", "a", "super supra"), "b.md": ("", "b", "super")}
+        applied(connection, [both, {"c.md": ("", "c", "supra")}, {"a.md": None}], KEEPING)
+        with reading(connection) as transaction:
+            assert [each.chunks for each in segments(transaction)] == [2, 1]
+            assert prefixed(transaction, "su", EVERY) == {"super": 1, "supra": 1}
+            assert frequencies(transaction, ["a", "super", "supra"]) == {"super": 1, "supra": 1}
+            assert gone(transaction, ["b", "super", "supra"]) == {"super": 1, "supra": 1}
+        applied(connection, [{"b.md": None}], KEEPING)
+        with reading(connection) as transaction:
+            assert prefixed(transaction, "", EVERY) == {"c": 1, "supra": 1}
+            assert rows(transaction, Count, "SELECT count(*) FROM keyword_gone") == [Count(0)]
+
+
+def test_a_pack_that_holds_other_than_its_head_says_is_damage_to_a_prefix() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": ("", "a", "super supra")}])
+        with writing(connection) as transaction:
+            run(transaction, "UPDATE keyword_packs SET lists = substr(lists, 1, 6)")
+        with reading(connection) as transaction, pytest.raises(DamagedError, match="a pack of lists"):
+            prefixed(transaction, "su", EVERY)
+
+
+def test_a_prefix_is_counted_no_further_than_makes_it_certain_to_begin_more_words_than_asked() -> None:
+    ticks: list[int] = []
+
+    def tick() -> int:
+        ticks.append(1)
+        return 0
+
+    words = " ".join(f"w{number:05}" for number in range(30_000))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, Shape()) as connection:
+        applied(connection, [{"a.md": ("", "a", words)}, {"b.md": ("", "b", "w1 w2 w3")}, {"b.md": None}], KEEPING)
+        with reading(connection) as transaction:
+            connection.set_progress_handler(tick, 100)
+            certain = prefixed(transaction, "w", 10)
+            cut = len(ticks)
+            whole = prefixed(transaction, "w", EVERY)
+            connection.set_progress_handler(None, 0)
+    assert 10 < len(certain) < len(whole) > 20_000
+    assert 3 * cut < len(ticks) - cut
+
+
+def test_a_segment_is_written_with_no_statement_for_each_of_its_terms() -> None:
+    words = " ".join(f"w{number}" for number in range(400))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, Shape()) as connection:
+        applied(connection, [{"a.md": ("", "a", words)}])
+        statements: list[str] = []
+        connection.set_trace_callback(statements.append)
+        applied(connection, [{"b.md": ("", "b", words)}])
+        connection.set_trace_callback(None)
+    assert len(statements) < 100
 
 
 def test_a_segment_of_chunks_all_gone_goes_with_them() -> None:

@@ -7,7 +7,6 @@ from sift.api.errors import Problem, StoreUnavailableError
 from sift.domain.codec.shape import FORMAT
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, TABLE_DIGEST
 from sift.storage.database import Batches, Connection, Value, reading, rows, run, writing
-from sift.storage.keyword_lists import frequencies
 from sift.storage.keywords import REMAKE_REMEDY, current, refuse_stale, remade, remake_started, settle
 from tests.keyword_indexes import (
     NOTES,
@@ -15,6 +14,7 @@ from tests.keyword_indexes import (
     Average,
     checked,
     chunk_tokens,
+    frequencies,
     staled,
 )
 from tests.keyword_orders import placed, placed_in

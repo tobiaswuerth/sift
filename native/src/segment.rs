@@ -21,7 +21,6 @@ pub struct Passages<'a> {
 
 pub struct Written {
     pub filed: Filed,
-    pub terms: Vec<(Box<str>, usize)>,
     pub lengths: Vec<(i64, Vec<u8>)>,
 }
 
@@ -248,12 +247,11 @@ impl Held {
             })
             .collect();
         let lengths = lengths_written(&self.ids, &self.lengths, shape.lengths_shift())?;
-        let (mut filed, mut packer, mut terms) = (Filed::default(), Packer::default(), Vec::new());
+        let (mut filed, mut packer) = (Filed::default(), Packer::default());
         for row in rows?.into_iter().flatten() {
-            terms.push((row.term.clone(), row.chunks));
             filed.take(&mut packer, row)?;
         }
         filed.close(&mut packer)?;
-        Ok(Written { filed, terms, lengths })
+        Ok(Written { filed, lengths })
     }
 }

@@ -21,6 +21,13 @@ pub struct Entry<'a> {
     pub positions: &'a [u8],
 }
 
+struct Heading<'a> {
+    term: &'a str,
+    chunks: usize,
+    listed: usize,
+    placed: usize,
+}
+
 #[derive(Default)]
 pub struct Packer {
     first: Option<Box<str>>,
@@ -106,24 +113,43 @@ impl Packer {
     }
 }
 
-pub fn entries<'a>(lists: &'a [u8], places: Option<&'a [u8]>) -> Result<Vec<Entry<'a>>, String> {
+fn heads(lists: &[u8]) -> Result<(Vec<Heading<'_>>, usize), String> {
     let Some((count, _)) = lists.split_first_chunk::<COUNT>() else {
         return Err(DAMAGED.to_owned());
     };
-    let (mut heads, mut at) = (Vec::new(), COUNT);
+    let (mut found, mut at) = (Vec::new(), COUNT);
     for _ in 0..u32::from_le_bytes(*count) {
         let named = number(lists, &mut at)?;
         let term = str::from_utf8(taken(lists, &mut at, named)?).map_err(|_| DAMAGED)?;
         let (chunks, listed) = (number(lists, &mut at)?, number(lists, &mut at)?);
-        heads.push((term, chunks, listed, number(lists, &mut at)?));
-    }
-    let (mut found, mut past) = (Vec::with_capacity(heads.len()), 0);
-    for (term, chunks, listed, held) in heads {
-        let postings = taken(lists, &mut at, listed)?;
-        let positions = places.map_or(Ok(&[][..]), |places| taken(places, &mut past, held))?;
-        found.push(Entry {
+        let placed = number(lists, &mut at)?;
+        found.push(Heading {
             term,
             chunks,
+            listed,
+            placed,
+        });
+    }
+    Ok((found, at))
+}
+
+pub fn counted<'a>(lists: &'a [u8], low: &str, high: Option<&str>) -> Result<Vec<(&'a str, usize)>, String> {
+    let (heads, _) = heads(lists)?;
+    let within = heads
+        .iter()
+        .filter(|head| head.term >= low && high.is_none_or(|high| head.term < high));
+    Ok(within.map(|head| (head.term, head.chunks)).collect())
+}
+
+pub fn entries<'a>(lists: &'a [u8], places: Option<&'a [u8]>) -> Result<Vec<Entry<'a>>, String> {
+    let (heads, mut at) = heads(lists)?;
+    let (mut found, mut past) = (Vec::with_capacity(heads.len()), 0);
+    for head in heads {
+        let postings = taken(lists, &mut at, head.listed)?;
+        let positions = places.map_or(Ok(&[][..]), |places| taken(places, &mut past, head.placed))?;
+        found.push(Entry {
+            term: head.term,
+            chunks: head.chunks,
             postings,
             positions,
         });

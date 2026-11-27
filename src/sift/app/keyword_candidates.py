@@ -37,7 +37,7 @@ def found(stores: Open, wanted: Wanted, expression: Expression) -> Ranked:
     if expression == NOTHING:
         return Ranked(())
     plans = [
-        (one, keywords, stores.guarded(one, partial(planned, keywords.store, expression)))
+        (one, keywords, stores.guarded(one, partial(planned, keywords.store, expression, wanted.tuning)))
         for one, keywords in stores.keyworded()
         if expression not in keywords.prepared
     ]

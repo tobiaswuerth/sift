@@ -292,7 +292,7 @@ def fts5_ranked(held: Chunks, query: str, k: int) -> list[tuple[int, float]]:
 def search(
     stores: Sequence[Opened], expression: Expression, k: int, *, by_document: bool = True, tuning: Tuning = TUNING
 ) -> tuple[FoundChunk, ...]:
-    plans = [planned(store, expression) for store in stores]
+    plans = [planned(store, expression, tuning) for store in stores]
     refuse_reading_too_much(plans, tuning)
     each = [prepared(plan) for plan in plans]
     query = query_of(expression, each)

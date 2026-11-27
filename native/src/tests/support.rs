@@ -3,7 +3,7 @@ use std::sync::{Arc, LazyLock};
 
 use crate::lists::{Coded, block, gaps, placed};
 use crate::merge::{Fed, Merger};
-use crate::packs::entries;
+use crate::packs::{counted, entries};
 use crate::postings::{Filed, Shape};
 use crate::segment::{Held, Passages, Written};
 use crate::words::Table;
@@ -115,6 +115,15 @@ pub fn shown(filed: &Filed) -> Result<Told, String> {
 
 pub fn terms(filed: &Filed) -> Result<Vec<String>, String> {
     Ok(shown(filed)?.1.into_iter().map(|each| each.0).collect())
+}
+
+pub fn counts(filed: &Filed) -> Result<Vec<(String, usize)>, String> {
+    let mut found = Vec::new();
+    for pack in &filed.packs {
+        let held = counted(&pack.lists, "", None)?;
+        found.extend(held.into_iter().map(|(term, chunks)| (term.to_owned(), chunks)));
+    }
+    Ok(found)
 }
 
 fn listed(coded: &Coded, found: &mut Decoded) -> Result<(), String> {

@@ -127,10 +127,13 @@ LAYOUT: tuple[Migration, ...] = (
                 lengths BLOB NOT NULL,
                 PRIMARY KEY(segment, block)
             ) STRICT""",
-            """CREATE TABLE keyword_terms(
-                term TEXT PRIMARY KEY,
-                chunks INTEGER NOT NULL CHECK (chunks > 0)
+            """CREATE TABLE keyword_gone(
+                term TEXT NOT NULL,
+                segment INTEGER NOT NULL REFERENCES keyword_segments(id) ON DELETE CASCADE,
+                chunks INTEGER NOT NULL CHECK (chunks > 0),
+                PRIMARY KEY(term, segment)
             ) STRICT, WITHOUT ROWID""",
+            "CREATE INDEX keyword_gone_of ON keyword_gone(segment)",
             "CREATE TABLE keyword_dead(place INTEGER PRIMARY KEY) STRICT",
             """CREATE TABLE keyword_beside(
                 id INTEGER PRIMARY KEY CHECK (id = 1),

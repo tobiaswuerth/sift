@@ -1,6 +1,8 @@
 use crate::packed::{PACKED, unwrapped};
 use crate::segment::{Held, Passages, lengths_written};
-use crate::tests::support::{AVERAGE, built, decoded, long, refused, shown, small, table, taken, terms, wide, words};
+use crate::tests::support::{
+    AVERAGE, built, counts, decoded, long, refused, shown, small, table, taken, terms, wide, words,
+};
 use crate::words::Table;
 
 const MOST_TIMES: usize = 1024;
@@ -30,8 +32,8 @@ fn a_segment_holds_where_each_term_occurs_and_how_long_each_passage_is() -> Resu
     let made = built(&[(7, "one two two"), (9, "two three")], wide()?)?;
     assert_eq!(terms(&made.filed)?, ["one", "three", "two"]);
     assert_eq!(
-        made.terms.iter().map(|each| (&*each.0, each.1)).collect::<Vec<_>>(),
-        [("one", 1), ("three", 1), ("two", 2)]
+        counts(&made.filed)?,
+        [("one".to_owned(), 1), ("three".to_owned(), 1), ("two".to_owned(), 2)]
     );
     assert_eq!(
         decoded(&made.filed, "two")?,
@@ -103,7 +105,6 @@ fn a_segment_fed_its_passages_in_any_portions_holds_the_same() -> Result<(), Str
         }
         let made = held.written(AVERAGE, small()?)?;
         assert_eq!(shown(&made.filed)?, shown(&whole.filed)?);
-        assert_eq!(made.terms, whole.terms);
     }
     Ok(())
 }
@@ -124,7 +125,6 @@ fn a_segment_given_more_passages_than_its_tokens_allow_takes_those_before_it_was
     assert!(0 < fitting && fitting < borrowed.len());
     let (made, want) = (held.written(AVERAGE, small()?)?, built(&borrowed[..fitting], small()?)?);
     assert_eq!(shown(&made.filed)?, shown(&want.filed)?);
-    assert_eq!(made.terms, want.terms);
     Ok(())
 }
 

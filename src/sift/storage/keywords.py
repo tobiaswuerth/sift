@@ -2,7 +2,7 @@ import dataclasses
 import json
 import re
 from collections import Counter
-from collections.abc import Generator, Iterable, Iterator, Sequence
+from collections.abc import Generator, Iterator, Sequence
 from contextlib import contextmanager
 from typing import NamedTuple, cast
 
@@ -52,6 +52,8 @@ TAKEN_OVER = "another sift began remaking this keyword index for itself and has 
 TAKEN_OVER_REMEDY = "index it from one sift only: sifts whose SQLite renders numbers apart remake it in turn"
 NEWER = "the store's keyword index was made by a newer sift"
 NEWER_REMEDY = "upgrade sift"
+GONE = """INSERT INTO keyword_gone(term, segment, chunks) VALUES (?, ?, ?)
+          ON CONFLICT(term, segment) DO UPDATE SET chunks = chunks + excluded.chunks"""
 DIGITS = re.compile("[0-9]{1,19}")
 MOST_ROW = (1 << 63) - 1
 TEXTS_AT_ONCE = 1000
@@ -165,26 +167,6 @@ def segment_written(transaction: Writing, built: Building, average: float, shape
     return made
 
 
-def _terms_added(transaction: Writing, added: Iterable[tuple[str, int]], tokens_added: int) -> None:
-    run_each(
-        transaction,
-        """INSERT INTO keyword_terms(term, chunks) VALUES (?, ?)
-           ON CONFLICT(term) DO UPDATE SET chunks = chunks + excluded.chunks""",
-        added,
-    )
-    run(transaction, "UPDATE counts SET tokens = tokens + ?", (tokens_added,))
-
-
-def _uncounted(transaction: Writing, gone: Counter[str], tokens_gone: int) -> None:
-    run_each(transaction, "DELETE FROM keyword_terms WHERE term = ? AND chunks = ?", list(gone.items()))
-    run_each(
-        transaction,
-        "UPDATE keyword_terms SET chunks = chunks - ? WHERE term = ?",
-        [(n, term) for term, n in gone.items()],
-    )
-    run(transaction, "UPDATE counts SET tokens = tokens - ?", (tokens_gone,))
-
-
 def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
     spans = rows(
         transaction,
@@ -199,7 +181,7 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
     held = gathered(built)
     average = (totals(transaction).tokens + held.tokens) / (indexed.n + held.chunks)
     made = segment_written(transaction, built, average, shape)
-    _terms_added(transaction, made.terms, made.tokens)
+    run(transaction, "UPDATE counts SET tokens = tokens + ?", (made.tokens,))
     run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (str(made.last), THROUGH_KEY))
     return made.chunks
 
@@ -211,13 +193,13 @@ def index_new(transaction: WritingDocuments) -> None:
     settled(transaction, shape)
 
 
-def _dead_by_segment(transaction: Writing, dead: Sequence[int]) -> list[tuple[int, int]]:
+def _owners(transaction: Writing, dead: Sequence[int]) -> list[int]:
     held = rows(transaction, Range, "SELECT id, first, last FROM keyword_segments ORDER BY first")
     starts = np.array([segment.first for segment in held], np.int64)
     owners = ints(np.searchsorted(starts, np.array(dead, np.int64), side="right") - 1)
     if any(index < 0 or chunk > held[index].last for index, chunk in zip(owners, dead, strict=True)):
         raise DamagedError("the keyword index holds no segment of a chunk it indexed")
-    return [(n, held[index].id) for index, n in Counter(owners).items()]
+    return [held[index].id for index in owners]
 
 
 def _forget(transaction: Writing, documents: Sequence[DocumentId]) -> None:
@@ -228,17 +210,18 @@ def _forget(transaction: Writing, documents: Sequence[DocumentId]) -> None:
            WHERE document IN (SELECT value FROM json_each(?)) AND place <= ? ORDER BY place""",
         (json.dumps(list(documents)), _through(transaction)),
     )
-    gone: Counter[str] = Counter()
-    held = 0
-    for each in _streams(transaction, spans):
-        gone.update(set(each) - {GAP})
-        held += _tokens((each,))
-    _uncounted(transaction, gone, held)
     dead = [span.id for span in spans]
+    owners = _owners(transaction, dead)
+    gone: Counter[tuple[str, int]] = Counter()
+    held = 0
+    for owner, each in zip(owners, _streams(transaction, spans), strict=True):
+        gone.update((term, owner) for term in set(each) - {GAP})
+        held += _tokens((each,))
+    run_each(transaction, GONE, [(term, owner, chunks) for (term, owner), chunks in gone.items()])
+    run(transaction, "UPDATE counts SET tokens = tokens - ?", (held,))
     run(transaction, "INSERT INTO keyword_dead(place) SELECT value FROM json_each(?)", (json.dumps(dead),))
-    run_each(
-        transaction, "UPDATE keyword_segments SET dead = dead + ? WHERE id = ?", _dead_by_segment(transaction, dead)
-    )
+    emptied = [(chunks, owner) for owner, chunks in Counter(owners).items()]
+    run_each(transaction, "UPDATE keyword_segments SET dead = dead + ? WHERE id = ?", emptied)
     run(transaction, "DELETE FROM keyword_segments WHERE dead = chunks")
 
 
@@ -257,7 +240,6 @@ def _anew(transaction: Writing, made: str, start: int) -> None:
     refuse_newer(transaction)
     drop_beside(transaction)
     run(transaction, "DELETE FROM keyword_segments")
-    run(transaction, "DELETE FROM keyword_terms")
     run(transaction, "DELETE FROM keyword_dead")
     run(transaction, "UPDATE counts SET tokens = 0")
     written = _meta(transaction, SHAPE_KEY)

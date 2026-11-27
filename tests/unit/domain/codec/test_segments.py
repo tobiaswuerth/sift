@@ -8,7 +8,7 @@ from hypothesis import strategies as st
 
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.postings import MOST_INFLATED_BYTES, blocked, lengths_of, positions_of, ranges_of
-from sift.domain.codec.segments import GAP, WrittenSegment, building, gathered, stream, written
+from sift.domain.codec.segments import GAP, WrittenSegment, building, counted, gathered, stream, written
 from sift.domain.codec.shape import MOST_BLOCK, Shape
 from sift.domain.rank.bm25 import STEPS, TOP, term_scores, unquantized
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, field_tokens, tokens
@@ -53,7 +53,7 @@ def postings(made: WrittenSegment) -> list[Postings]:
             else:
                 found.append(Postings(term, count, ShortPostings(coded, placed)))
     assert (blocks, ranged) == ({}, {})
-    assert [(each.term, each.chunks) for each in found] == list(made.terms)
+    assert [(each.term, each.chunks) for each in found] == counted([each[2] for each in made.filed.packs], "", None)
     return found
 
 

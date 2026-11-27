@@ -21,9 +21,9 @@ from sift.retrieval.keyword.lists import (
     postings_in,
     stored,
 )
-from sift.storage.keyword_lists import expansions, volume
 
 type Expired = Callable[[], bool]
+type Expansions = Mapping[Prefix, Mapping[str, int]]
 
 PREFIX_REMEDY = "write more of the word before the *"
 PHRASE_REMEDY = "add a rarer word to the phrase, or search its words without quotes"
@@ -53,7 +53,7 @@ def _union(store: Opened, lists: list[StoredList], expired: Expired = never) -> 
     return Materialized(merged(places, counts), cut)
 
 
-def _size(lists: list[StoredList]) -> int:
+def size(lists: list[StoredList]) -> int:
     return sum(len(held.places) if isinstance(held, Whole) else last(held.ranges.ends) for held in lists)
 
 
@@ -65,7 +65,7 @@ def _within(store: Opened, held: StoredList, candidates: Ids) -> Ids:
 
 
 def _rarest_first(phrase: Phrase, lists: dict[str, list[StoredList]]) -> list[str]:
-    return sorted(set(phrase.tokens), key=lambda token: (_size(lists[token]), token))
+    return sorted(set(phrase.tokens), key=lambda token: (size(lists[token]), token))
 
 
 def _out_of_time() -> Materialized:
@@ -98,18 +98,23 @@ def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]], e
     return Materialized((candidates[found], counts[found]))
 
 
-def _prefix(store: Opened, prefix: Prefix, expired: Expired) -> Materialized:
+def _prefix(store: Opened, terms: list[str], expired: Expired) -> Materialized:
     if expired():
         return _out_of_time()
-    terms = expansions(store.transaction, prefix.text)
     lists = stored(store, terms)
     return _union(store, [held for term in terms for held in lists[term]], expired)
 
 
 def materialized(
-    store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]], expired: Expired = never
+    store: Opened,
+    leaf: Phrase | Prefix,
+    lists: dict[str, list[StoredList]],
+    words: Expansions,
+    expired: Expired = never,
 ) -> Materialized:
-    return _phrase(store, leaf, lists, expired) if isinstance(leaf, Phrase) else _prefix(store, leaf, expired)
+    if isinstance(leaf, Phrase):
+        return _phrase(store, leaf, lists, expired)
+    return _prefix(store, list(words[leaf]), expired)
 
 
 def _ranges(store: Opened, held: StoredList) -> Ids:
@@ -122,21 +127,11 @@ def _inside(store: Opened, held: StoredList, ranges: Ascending) -> int:
     return int(np.count_nonzero(among(held.places >> store.shape.range_shift, ranges)))
 
 
-def _phrase_reads(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]]) -> int:
+def reads_of(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]]) -> int:
     rarest, *others = _rarest_first(phrase, lists)
     held = np.concatenate([np.zeros(0, np.int64), *(_ranges(store, part) for part in lists[rarest])])
     ranges = distinct(ascending(held))
-    return _size(lists[rarest]) + sum(_inside(store, part, ranges) for token in others for part in lists[token])
-
-
-def reads_of(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]]) -> int:
-    if isinstance(leaf, Prefix):
-        return volume(store.transaction, leaf.text).passages
-    return _phrase_reads(store, leaf, lists)
-
-
-def expansions_of(store: Opened, prefix: Prefix) -> int:
-    return volume(store.transaction, prefix.text).words
+    return size(lists[rarest]) + sum(_inside(store, part, ranges) for token in others for part in lists[token])
 
 
 def _written(leaf: Phrase | Prefix) -> str:
@@ -152,6 +147,7 @@ class Limit:
     verb: str
     phrase_remedy: str = PHRASE_REMEDY
     stores: int = 1
+    cut: bool = False
 
 
 def refused(costs: Mapping[Phrase | Prefix, int], limit: Limit) -> NoReturn:
@@ -159,6 +155,7 @@ def refused(costs: Mapping[Phrase | Prefix, int], limit: Limit) -> NoReturn:
     remedy = PREFIX_REMEDY if isinstance(widest, Prefix) else limit.phrase_remedy
     if limit.stores > 1:
         remedy = f"{remedy}, or {FEWER_REMEDY}"
-    whole = "" if limit.total == cost else f"; with the rest of the query, {counted(limit.total, limit.unit)}"
-    said = f"{_written(widest)} {limit.costs} {counted(cost, limit.unit)}{whole}"
+    least = "at least " if limit.cut and cost > limit.most else ""
+    rest = f"; with the rest of the query, {least}{counted(limit.total, limit.unit)}"
+    said = f"{_written(widest)} {limit.costs} {least}{counted(cost, limit.unit)}{'' if limit.total == cost else rest}"
     raise InvalidRequestError(f"{said}, more than the {limit.most:,} a search {limit.verb}", remedy)

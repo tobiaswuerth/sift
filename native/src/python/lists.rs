@@ -5,11 +5,12 @@ use pyo3::types::{PyBytes, PyList, PyString};
 
 use crate::lists::{blocks, places};
 use crate::numbers::little_endian;
-use crate::packs::entries;
+use crate::packs::{self, entries};
 use crate::python::{lengths_of, numbers_of};
 use crate::segment::lengths_written;
 
 type Blocked<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Vec<usize>);
+type Counted<'py> = Vec<(Bound<'py, PyString>, usize)>;
 type Unpacked<'py> = (
     Bound<'py, PyString>,
     usize,
@@ -55,6 +56,18 @@ pub fn unpacked<'py>(
         (PyString::new(py, each.term), each.chunks, short, positions)
     });
     Ok(told.collect())
+}
+
+#[pyfunction]
+#[pyo3(signature = (rows, low, high))]
+pub fn counted<'py>(rows: &Bound<'py, PyAny>, low: &str, high: Option<&str>) -> PyResult<Counted<'py>> {
+    let (py, rows) = (rows.py(), rows.extract::<Vec<PyBackedBytes>>()?);
+    let mut found = Vec::new();
+    for lists in &rows {
+        let held = packs::counted(lists, low, high).map_err(PyValueError::new_err)?;
+        found.extend(held.into_iter().map(|(term, chunks)| (PyString::new(py, term), chunks)));
+    }
+    Ok(found)
 }
 
 #[pyfunction]

@@ -26,7 +26,7 @@ def blobs_beside_the_key(statement: str) -> list[str]:
 
 def test_the_tables_sift_declares_without_row_ids_are_found() -> None:
     names = {re.findall(r"TABLE (?:IF NOT EXISTS )?(\w+)", each)[0] for each in declared()}
-    assert {"meta", "keyword_terms", "links"} <= names
+    assert {"meta", "keyword_gone", "links"} <= names
 
 
 def test_no_table_searched_by_its_key_alone_holds_a_blob_beside_the_key() -> None:

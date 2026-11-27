@@ -12,10 +12,11 @@ from sift.storage.database import Batches, Connection, Reading, reading, rows, r
 from sift.storage.keyword_lists import (
     blocks,
     dead_within,
-    frequencies,
+    gone,
     keyword_generation,
     parts,
     positions,
+    prefixed,
     segments,
 )
 from sift.storage.keywords import totals
@@ -39,10 +40,6 @@ rounds = st.lists(
     min_size=1,
     max_size=4,
 )
-
-
-class Term(NamedTuple):
-    term: str
 
 
 class Pack(NamedTuple):
@@ -99,6 +96,14 @@ def stored(transaction: Reading) -> Places:
     return held
 
 
+def frequencies(transaction: Reading, terms: list[str]) -> dict[str, int]:
+    held = Counter[str]()
+    for part in parts(transaction, terms):
+        held[part.term] += part.chunks
+    held.subtract(gone(transaction, terms))
+    return {term: chunks for term, chunks in held.items() if chunks}
+
+
 class Kept(NamedTuple):
     first: int
     last: int
@@ -111,8 +116,8 @@ def checked(connection: Connection) -> None:
         found = instances(transaction)
         want = expected(found)
         assert stored(transaction) == want
-        assert frequencies(transaction, sorted(want)) == {term: len(chunks) for term, chunks in want.items()}
-        assert sorted(row.term for row in rows(transaction, Term, "SELECT term FROM keyword_terms")) == sorted(want)
+        live = {term: len(chunks) for term, chunks in want.items()}
+        assert (frequencies(transaction, sorted(want)), prefixed(transaction, "", 1 << 62)) == (live, live)
         assert totals(transaction).tokens == len(found)
         held = segments(transaction)
         place_of = {chunk: place for place, chunk in chunks_at(transaction).items()}

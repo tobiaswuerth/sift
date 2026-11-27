@@ -1,20 +1,25 @@
 import json
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import NamedTuple
 
 import numpy as np
 
 from sift.domain.arrays import Ids
-from sift.domain.codec.segments import unpacked
+from sift.domain.codec.segments import counted, unpacked
 from sift.domain.errors import DamagedError
 from sift.storage.columns import columns
-from sift.storage.database import Count, Reading, first, rows
+from sift.storage.database import Count, Reading, batches, first, rows
 
 MOST_POINT = 0x10FFFF
 SURROGATES_START, SURROGATES_END = 0xD800, 0xE000
-EXPANSIONS = (
-    "SELECT term, chunks FROM keyword_terms WHERE term >= ?",
-    "SELECT term, chunks FROM keyword_terms WHERE term >= ? AND term < ?",
+WITHIN = """SELECT lists FROM keyword_packs WHERE segment = :segment AND first >= coalesce(
+                (SELECT max(first) FROM keyword_packs WHERE segment = :segment AND first <= :low), :low)"""
+PACKS_WITHIN = (f"{WITHIN} ORDER BY first", f"{WITHIN} AND first < :high ORDER BY first")
+PACKS_AT_ONCE = 64
+GONE = "SELECT term, sum(chunks) FROM keyword_gone WHERE term IN (SELECT value FROM json_each(?)) GROUP BY term"
+GONE_WITHIN = (
+    "SELECT term, sum(chunks) FROM keyword_gone WHERE term >= :low GROUP BY term",
+    "SELECT term, sum(chunks) FROM keyword_gone WHERE term >= :low AND term < :high GROUP BY term",
 )
 PACK_OF = """SELECT s.id, t.value,
                     (SELECT p.rowid FROM keyword_packs p WHERE p.segment = s.id AND p.first <= t.value
@@ -24,10 +29,6 @@ RANGES = "SELECT ranges FROM keyword_ranges WHERE segment = ? AND term = ?"
 PACKS = "SELECT rowid, segment, lists FROM keyword_packs WHERE rowid IN (SELECT value FROM json_each(?))"
 PACK_PLACED = """SELECT lists, places FROM keyword_packs WHERE segment = ? AND first <= ?
                  ORDER BY first DESC LIMIT 1"""
-VOLUMES = (
-    "SELECT count(*), coalesce(sum(chunks), 0) FROM keyword_terms WHERE term >= ?",
-    "SELECT count(*), coalesce(sum(chunks), 0) FROM keyword_terms WHERE term >= ? AND term < ?",
-)
 
 
 class SegmentRow(NamedTuple):
@@ -82,9 +83,8 @@ class Frequency(NamedTuple):
     chunks: int
 
 
-class Volume(NamedTuple):
-    words: int
-    passages: int
+class PackHeads(NamedTuple):
+    lists: bytes
 
 
 class LengthsRow(NamedTuple):
@@ -114,9 +114,8 @@ def chunks_placed(transaction: Reading, places: Sequence[int]) -> tuple[Ids, Ids
     return found, chunks, documents
 
 
-def frequencies(transaction: Reading, terms: Sequence[str]) -> dict[str, int]:
-    sql = "SELECT term, chunks FROM keyword_terms WHERE term IN (SELECT value FROM json_each(?))"
-    return {found.term: found.chunks for found in rows(transaction, Frequency, sql, (json.dumps(list(terms)),))}
+def gone(transaction: Reading, terms: Sequence[str]) -> dict[str, int]:
+    return {found.term: found.chunks for found in rows(transaction, Frequency, GONE, (json.dumps(list(terms)),))}
 
 
 def _after(prefix: str) -> str | None:
@@ -127,20 +126,25 @@ def _after(prefix: str) -> str | None:
     return kept[:-1] + chr(SURROGATES_END if SURROGATES_START <= following < SURROGATES_END else following)
 
 
-def _bounded(prefix: str) -> tuple[int, tuple[str, ...]]:
-    after = _after(prefix)
-    return (0, (prefix,)) if after is None else (1, (prefix, after))
+def _counted_within(transaction: Reading, low: str, high: str | None) -> Iterator[list[tuple[str, int]]]:
+    for segment in segments(transaction):
+        within = {"segment": segment.id, "low": low, "high": high}
+        for packs in batches(transaction, PackHeads, PACKS_WITHIN[high is not None], within, PACKS_AT_ONCE):
+            yield counted([pack.lists for pack in packs], low, high)
 
 
-def expansions(transaction: Reading, prefix: str) -> list[str]:
-    which, parameters = _bounded(prefix)
-    return [found.term for found in rows(transaction, Frequency, EXPANSIONS[which], parameters)]
-
-
-def volume(transaction: Reading, prefix: str) -> Volume:
-    which, parameters = _bounded(prefix)
-    (found,) = rows(transaction, Volume, VOLUMES[which], parameters)
-    return found
+def prefixed(transaction: Reading, prefix: str, most: int) -> dict[str, int]:
+    high = _after(prefix)
+    deleted = rows(transaction, Frequency, GONE_WITHIN[high is not None], {"low": prefix, "high": high})
+    held: dict[str, int] = {}
+    for found in _counted_within(transaction, prefix, high):
+        for term, chunks in found:
+            held[term] = held.get(term, 0) + chunks
+        if len(held) - len(deleted) > most:
+            break
+    for each in deleted:
+        held[each.term] = held.get(each.term, 0) - each.chunks
+    return {term: chunks for term, chunks in sorted(held.items()) if chunks > 0}
 
 
 def _packed(transaction: Reading, terms: Sequence[str]) -> dict[int, list[str]]:

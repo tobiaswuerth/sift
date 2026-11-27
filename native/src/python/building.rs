@@ -3,7 +3,7 @@ use std::sync::Arc;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
-use pyo3::types::{PyBytes, PyList, PyString};
+use pyo3::types::{PyBytes, PyList};
 
 use crate::python::{Listed, listed, numbers_of, shaped};
 use crate::segment::{Held, Passages};
@@ -11,7 +11,7 @@ use crate::words::Table;
 
 const USED: &str = "a segment is written once, and takes no more after";
 
-type Handed<'py> = (Listed<'py>, Bound<'py, PyList>, Bound<'py, PyList>);
+type Handed<'py> = (Listed<'py>, Bound<'py, PyList>);
 type Gathered = (Option<i64>, Option<i64>, usize, u64);
 
 #[pyclass(frozen, module = "sift._native")]
@@ -95,15 +95,6 @@ impl Building {
             .map_err(PyValueError::new_err)?;
         let lengths = made.lengths.iter();
         let lengths = lengths.map(|(block, packed)| (segment, *block, PyBytes::new(py, packed)));
-        let terms = made
-            .terms
-            .iter()
-            .map(|(term, chunks)| (PyString::new(py, term), *chunks));
-        let rows = (
-            listed(py, segment, &made.filed)?,
-            PyList::new(py, lengths)?,
-            PyList::new(py, terms)?,
-        );
-        Ok(rows)
+        Ok((listed(py, segment, &made.filed)?, PyList::new(py, lengths)?))
     }
 }
