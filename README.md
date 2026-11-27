@@ -152,20 +152,22 @@ and long German documents, worse on scientific claims, and faster
 
 ## Performance
 
-Over 3.4 million passages (arXiv abstracts, ACL papers and Swiss federal law), each question asked for the first time,
-through `sift serve` with its models loaded, on a desktop workstation whose GPU another job shared:
+Over 45.7 million passages in seven collections (PubMed, OpenAlex, arXiv and bioRxiv abstracts, ACL papers, Swiss
+federal law and notes), each question asked for the first time, through `sift serve` with its models loaded, on a
+desktop workstation whose CPU and GPU another job shared (median of 8 questions each):
 
 | Use case | Mode | Time |
 |---|---|---|
-| A name, an id, a term | `search` | 20 to 50 ms |
-| A question, by its keywords | `search` | 0.13 s |
-| By meaning | `vsearch` | 0.2 s |
-| A question for RAG, reranked on the GPU | `query` | 0.45 s |
+| A name, an id, a term | `search` | 0.16 s |
+| A question, by its keywords | `search` | 0.6 s |
+| By meaning | `vsearch` | 0.8 s |
+| A question for RAG, reranked on the GPU | `query` | 1.1 s |
 | Documents like one | `similar` | 0.6 s |
 
-Loading the models takes the first semantic search about 12 seconds; `sift serve` keeps them loaded. `sift embed`
-embedded 110 long passages of law a second on that GPU. On two collections with questions whose answers are known,
-`sift bench` gives sift 2 the scores of sift 1.15, within 0.01 nDCG@10. Every figure and how it was measured:
+Asked again, with what they read in memory, each takes about half. The first semantic search of `sift serve` loads
+the models and the vectors' codes, which it then keeps: for those 45.7 million passages, 104 seconds from a cold
+disk. `sift embed` embeds 1,180 abstracts a second on that GPU, after compiling the model for 20 seconds; `sift index`
+puts 3.3 million passages of arXiv in their topical order in two minutes. Every figure and how it was measured:
 [benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md).
 
 ## Updating
