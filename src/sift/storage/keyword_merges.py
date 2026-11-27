@@ -7,7 +7,7 @@ import numpy as np
 
 from sift.domain.arrays import Ids, first, firsts, ints, last
 from sift.domain.codec.postings import lengths_of, with_lengths
-from sift.domain.codec.segments import MergedChunks, MergeLimits, fed, merger, stepped
+from sift.domain.codec.segments import MergedChunks, MergeLimits, fed, fed_packs, merger, stepped
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Held, Policy, backlog_merges, merges
@@ -16,11 +16,11 @@ from sift.storage.keyword_meta import Side
 from sift.storage.keyword_writes import Head, lengths_added, rows_added, segment_added
 
 LISTED = (
-    """SELECT term, chunks, postings, positions FROM keyword_postings
-       WHERE segment = :segment AND postings IS NOT NULL ORDER BY term""",
+    "SELECT lists, places FROM keyword_packs WHERE segment = :segment ORDER BY first",
     """SELECT term, :block, postings, positions FROM keyword_blocks WHERE segment = :segment ORDER BY term, number""",
 )
-ROWS_AT_ONCE = (512, 32)
+ROWS_AT_ONCE = (32, 32)
+FED = (fed_packs, fed)
 LENGTHS = """SELECT segment, block, lengths FROM keyword_lengths WHERE segment IN (SELECT value FROM json_each(?))
              ORDER BY segment, block"""
 HELD = "SELECT coalesce(sum(chunks - dead), 0), (SELECT tokens FROM counts) FROM keyword_served"
@@ -34,7 +34,8 @@ PLANNED = (
 )
 DROPPED = (
     "DELETE FROM keyword_blocks WHERE segment IN (SELECT value FROM json_each(?))",
-    "DELETE FROM keyword_postings WHERE segment IN (SELECT value FROM json_each(?))",
+    "DELETE FROM keyword_packs WHERE segment IN (SELECT value FROM json_each(?))",
+    "DELETE FROM keyword_ranges WHERE segment IN (SELECT value FROM json_each(?))",
     "DELETE FROM keyword_lengths WHERE segment IN (SELECT value FROM json_each(?))",
     "DELETE FROM keyword_segments WHERE id IN (SELECT value FROM json_each(?))",
 )
@@ -110,9 +111,9 @@ def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shap
     done = False
     while not done:
         step = stepped(held, made)
-        rows_added(transaction, step.lists, step.blocks)
+        rows_added(transaction, step.filed)
         for source in step.wanted:
-            while fed(held, source, next(listed[source], ())):
+            while FED[source % len(FED)](held, source, next(listed[source], ())):
                 pass
         done = step.done
     lengths_added(transaction, made, with_lengths(live, lengths, shape.lengths_shift))

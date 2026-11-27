@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
-use crate::postings::{Piece, Row, Shape};
+use crate::packs::{Packer, entries};
+use crate::postings::{Filed, Shape};
 
 pub use joining::Chunks;
 use joining::{Joining, Long, Made, Merged};
@@ -26,8 +27,7 @@ pub struct Limits {
 }
 
 pub struct Step {
-    pub rows: Vec<Row>,
-    pub pieces: Vec<Piece>,
+    pub filed: Filed,
     pub wanted: Vec<usize>,
     pub done: bool,
 }
@@ -39,6 +39,7 @@ pub struct Merger {
     ahead: Size,
     heads: BinaryHeap<Head>,
     long: Option<Long>,
+    packer: Packer,
 }
 
 impl Merger {
@@ -54,6 +55,7 @@ impl Merger {
             ahead: most.shared(sources),
             heads: BinaryHeap::new(),
             long: None,
+            packer: Packer::default(),
         })
     }
 
@@ -73,6 +75,28 @@ impl Merger {
             self.headed(source);
         }
         Some(low)
+    }
+
+    pub fn fed_packs<R: AsRef<[u8]>>(&mut self, source: usize, packs: &[(R, R)]) -> Result<Option<bool>, String> {
+        if source >= self.sources.len() {
+            return Ok(None);
+        }
+        let mut rows = Vec::new();
+        for (lists, places) in packs {
+            let found = entries(lists.as_ref(), Some(places.as_ref()))?;
+            rows.extend(found.iter().filter(|each| !each.postings.is_empty()).map(|each| Fed {
+                term: Arc::from(each.term),
+                chunks: each.chunks,
+                postings: each.postings.to_vec(),
+                positions: each.positions.to_vec(),
+            }));
+        }
+        Ok(self.fed(source, rows))
+    }
+
+    pub fn ended(&mut self, source: usize) -> Option<bool> {
+        self.sources.get_mut(source)?.end();
+        Some(false)
     }
 
     fn streamed(&mut self, mut long: Long, made: &mut Made) -> Result<Vec<usize>, String> {
@@ -194,13 +218,15 @@ impl Merger {
     }
 
     pub fn stepped(&mut self) -> Result<Step, String> {
-        let mut made = Made::default();
+        let (mut made, mut filed) = (Made::default(), Filed::default());
         let (wanted, done) = self.gathered(&mut made)?;
-        Ok(Step {
-            rows: made.rows,
-            pieces: made.pieces,
-            wanted,
-            done,
-        })
+        for row in made.rows {
+            filed.take(&mut self.packer, row)?;
+        }
+        filed.blocks.extend(made.pieces);
+        if done {
+            filed.close(&mut self.packer)?;
+        }
+        Ok(Step { filed, wanted, done })
     }
 }

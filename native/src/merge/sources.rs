@@ -75,11 +75,12 @@ impl Source {
     }
 
     pub fn fed(&mut self, rows: Vec<Fed>) {
-        if rows.is_empty() {
-            self.ended = true;
-        }
         self.held = rows.iter().fold(self.held, |sum, row| sum.with(row.size()));
         self.rows.extend(rows);
+    }
+
+    pub fn end(&mut self) {
+        self.ended = true;
     }
 
     pub fn next(&mut self, term: &str) -> Option<Fed> {

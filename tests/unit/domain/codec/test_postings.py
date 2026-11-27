@@ -25,7 +25,7 @@ from sift.domain.codec.postings import (
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from tests.coded_lists import BLOCK_HEAD, block, placed, ranges, varint, varints
-from tests.unit.domain.codec.built import SMALL, of_bodies, segment
+from tests.unit.domain.codec.built import SMALL, of_bodies, segment, short_lists
 
 
 def ascending(gaps: list[int], start: int) -> NDArray[np.int64]:
@@ -63,10 +63,10 @@ def test_a_short_list_is_kept_as_it_is_and_a_long_one_packed() -> None:
     a_long_one = 1000
     columns = of_bodies(["often", "twice"] if n < 2 else ["often"] for n in range(a_long_one))
     made = segment(np.arange(0, 3 * a_long_one, 3, dtype=np.int64), columns, 4.0, Shape())
-    held = {term: coded for _, term, _, coded, _, _ in made.lists if coded is not None}
-    assert held["twice"][:1] == RAW
-    assert held["often"][:1] == PACKED
-    assert len(held["often"]) < 100
+    held = short_lists(made)
+    assert held["twice"][0][:1] == RAW
+    assert held["often"][0][:1] == PACKED
+    assert len(held["often"][0]) < 100
 
 
 def test_no_lists_decode_to_nothing() -> None:
@@ -91,8 +91,7 @@ def test_numbers_come_back_from_their_varints(values: list[int]) -> None:
 def test_a_varint_takes_a_byte_per_seven_bits(value: int, size: int) -> None:
     title, body = (["w"], []) if value == 0 else ([], [*["filler"] * (value - 1), "w"])
     made = segment(np.zeros(1, np.int64), [(title, body, [])], 4.0)
-    held = {term: places for _, term, _, _, places, _ in made.lists if places is not None}
-    written = held["w"]
+    written = short_lists(made)["w"][1]
     assert written == RAW + varint(value)
     assert len(written) == 1 + size
 
@@ -229,7 +228,7 @@ def test_numbers_are_kept_little_endian_on_every_machine() -> None:
     (written,) = with_lengths(np.array([0], np.int64), np.array([258], np.int64), 1).values()
     assert zlib.decompress(written) == b"\x02\x01\x00\x00\x00\x00\x00\x00"
     made = segment(np.array([20, 21, 28], np.int64), of_bodies([["w"]] * 3), 4.0, SMALL)
-    (held,) = (kept for _, _, _, _, _, kept in made.lists if kept is not None)
+    ((_, _, _, held),) = made.filed.ranged
     assert zlib.decompress(held)[RANGES_HEAD.size : RANGES_HEAD.size + 4] == b"\x02\x00\x00\x00"
 
 

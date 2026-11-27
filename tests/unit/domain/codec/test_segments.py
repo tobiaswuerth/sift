@@ -12,6 +12,7 @@ from sift.domain.codec.segments import GAP, WrittenSegment, building, gathered, 
 from sift.domain.codec.shape import MOST_BLOCK, Shape
 from sift.domain.rank.bm25 import STEPS, TOP, term_scores, unquantized
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, field_tokens, tokens
+from tests.coded_lists import packed
 from tests.unit.domain.codec.built import EVERY_TOKEN, SEGMENT, SMALL, Columns, chunks, segment
 
 MOST_BYTES = 9
@@ -36,21 +37,23 @@ class Postings(NamedTuple):
 
 def postings(made: WrittenSegment) -> list[Postings]:
     blocks: dict[str, list[ShortPostings]] = {}
-    for held, term, number, coded, placed in made.blocks:
+    for held, term, number, coded, placed in made.filed.blocks:
         assert (held, number) == (SEGMENT, len(blocks.setdefault(term, [])))
         blocks[term].append(ShortPostings(coded, placed))
+    ranged = {term: (count, ranges) for held, term, count, ranges in made.filed.ranged if held == SEGMENT}
+    assert len(ranged) == len(made.filed.ranged)
     found: list[Postings] = []
-    for held, term, count, coded, placed, ranges in made.lists:
-        assert held == SEGMENT
-        if ranges is None:
-            assert coded is not None
-            assert placed is not None
-            found.append(Postings(term, count, ShortPostings(coded, placed)))
-        else:
-            assert (coded, placed) == (None, None)
-            found.append(Postings(term, count, LongPostings(ranges, tuple(blocks.pop(term)))))
-    assert blocks == {}
-    assert [(term, count) for _, term, count, _, _, _ in made.lists] == list(made.terms)
+    for held, first, lists, places in made.filed.packs:
+        entries = packed(lists, places)
+        assert (held, first) == (SEGMENT, entries[0][0])
+        for term, count, coded, placed in entries:
+            if term in ranged:
+                assert (count, coded, placed) == (ranged[term][0], b"", b"")
+                found.append(Postings(term, count, LongPostings(ranged.pop(term)[1], tuple(blocks.pop(term)))))
+            else:
+                found.append(Postings(term, count, ShortPostings(coded, placed)))
+    assert (blocks, ranged) == ({}, {})
+    assert [(each.term, each.chunks) for each in found] == list(made.terms)
     return found
 
 

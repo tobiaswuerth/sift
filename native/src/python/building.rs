@@ -95,9 +95,12 @@ impl Building {
             .map_err(PyValueError::new_err)?;
         let lengths = made.lengths.iter();
         let lengths = lengths.map(|(block, packed)| (segment, *block, PyBytes::new(py, packed)));
-        let terms = made.rows.iter().map(|row| (PyString::new(py, &row.term), row.chunks));
+        let terms = made
+            .terms
+            .iter()
+            .map(|(term, chunks)| (PyString::new(py, term), *chunks));
         let rows = (
-            listed(py, segment, &made.rows, &[])?,
+            listed(py, segment, &made.filed)?,
             PyList::new(py, lengths)?,
             PyList::new(py, terms)?,
         );

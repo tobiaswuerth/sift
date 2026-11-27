@@ -7,9 +7,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyString};
 
-use crate::postings::{Kept, Piece, Row, Shape};
+use crate::postings::{Filed, Shape};
 
-type Listed<'py> = (Bound<'py, PyList>, Bound<'py, PyList>);
+type Listed<'py> = (Bound<'py, PyList>, Bound<'py, PyList>, Bound<'py, PyList>);
 
 fn numbers_of(held: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
     PyBuffer::<i64>::get(held)?.to_vec(held.py())
@@ -24,30 +24,24 @@ fn shaped(shape: (u32, usize, usize, u32)) -> PyResult<Shape> {
     Shape::new(shape.0, shape.1, shape.2, shape.3).map_err(PyValueError::new_err)
 }
 
-fn listed<'py>(py: Python<'py>, segment: i64, rows: &[Row], pieces: &[Piece]) -> PyResult<Listed<'py>> {
-    let (lists, blocks) = (PyList::empty(py), PyList::empty(py));
-    let none = py.None().into_bound(py);
-    for row in rows {
-        let term = PyString::new(py, &row.term);
-        match &row.held {
-            Kept::Short(coded) => {
-                let (postings, positions) = (PyBytes::new(py, &coded.0), PyBytes::new(py, &coded.1));
-                lists.append((segment, term, row.chunks, postings, positions, &none))?;
-            }
-            Kept::Long { ranges, blocks: held } => {
-                lists.append((segment, &term, row.chunks, &none, &none, PyBytes::new(py, ranges)))?;
-                for (number, coded) in held.iter().enumerate() {
-                    let (postings, positions) = (PyBytes::new(py, &coded.0), PyBytes::new(py, &coded.1));
-                    blocks.append((segment, &term, number, postings, positions))?;
-                }
-            }
-        }
-    }
-    for (term, number, coded) in pieces {
+fn listed<'py>(py: Python<'py>, segment: i64, filed: &Filed) -> PyResult<Listed<'py>> {
+    let packs = filed.packs.iter().map(|pack| {
+        let (lists, places) = (PyBytes::new(py, &pack.lists), PyBytes::new(py, &pack.places));
+        (segment, PyString::new(py, &pack.first), lists, places)
+    });
+    let ranged = filed.ranged.iter().map(|held| {
+        let ranges = PyBytes::new(py, &held.ranges);
+        (segment, PyString::new(py, &held.term), held.chunks, ranges)
+    });
+    let blocks = filed.blocks.iter().map(|(term, number, coded)| {
         let (postings, positions) = (PyBytes::new(py, &coded.0), PyBytes::new(py, &coded.1));
-        blocks.append((segment, PyString::new(py, term), *number, postings, positions))?;
-    }
-    Ok((lists, blocks))
+        (segment, PyString::new(py, term), *number, postings, positions)
+    });
+    Ok((
+        PyList::new(py, packs)?,
+        PyList::new(py, ranged)?,
+        PyList::new(py, blocks)?,
+    ))
 }
 
 #[pymodule(name = "_native")]
@@ -55,6 +49,7 @@ fn native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lists::blocked_all, module)?)?;
     module.add_function(wrap_pyfunction!(lists::positions_all, module)?)?;
     module.add_function(wrap_pyfunction!(lists::with_lengths, module)?)?;
+    module.add_function(wrap_pyfunction!(lists::unpacked, module)?)?;
     module.add_function(wrap_pyfunction!(building::gathered, module)?)?;
     module.add_class::<building::Words>()?;
     module.add_class::<building::Building>()?;

@@ -160,7 +160,7 @@ def built_of(transaction: WritingDocuments, spans: Sequence[Span]) -> Building:
 def segment_written(transaction: Writing, built: Building, average: float, shape: Shape) -> WrittenSegment:
     held = gathered(built)
     made = written(built, segment_added(transaction, Head(held.first, held.last, held.chunks, average)), average, shape)
-    rows_added(transaction, made.lists, made.blocks)
+    rows_added(transaction, made.filed)
     run_each(transaction, "INSERT INTO keyword_lengths(segment, block, lengths) VALUES (?, ?, ?)", made.lengths)
     return made
 

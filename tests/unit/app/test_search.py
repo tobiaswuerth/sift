@@ -195,7 +195,7 @@ def test_a_store_that_cannot_be_read_is_passed_over_and_said(home: Path, tmp_pat
     assert dataclasses.replace(missing, message="") == Notice(Problem.STORE_MISSING, "", MISSING_REMEDY, "more")
 
 
-@pytest.mark.parametrize("table", ["keyword_postings", "chunks", "keyword_segments", "sources"])
+@pytest.mark.parametrize("table", ["keyword_packs", "chunks", "keyword_segments", "sources"])
 def test_a_store_damaged_where_a_search_reads_it_is_passed_over_and_the_others_searched(
     home: Path, tmp_path: Path, table: str
 ) -> None:
@@ -217,8 +217,8 @@ def _more(home: Path, tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "sql, query",
     [
-        ("UPDATE keyword_postings SET postings = x'02'", "halo"),
-        ("UPDATE keyword_postings SET positions = x'0001'", '"halo models"'),
+        ("UPDATE keyword_packs SET lists = x'02'", "halo"),
+        ("UPDATE keyword_packs SET places = x'0001'", '"halo models"'),
         ("DELETE FROM keyword_lengths", "halo"),
         ("DELETE FROM chunks WHERE document = (SELECT id FROM documents WHERE title = 'Halo')", "halo"),
     ],

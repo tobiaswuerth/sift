@@ -19,6 +19,7 @@ from sift.storage.keyword_lists import (
     segments,
 )
 from sift.storage.keywords import totals
+from tests.coded_lists import packed
 from tests.keyword_stores import COLUMNS, Instance, Round, instances, texts
 
 WORDS = ("alpha", "beta", "Gamma", "δέλτα", "x-ray", "naïve")
@@ -42,6 +43,11 @@ rounds = st.lists(
 
 class Term(NamedTuple):
     term: str
+
+
+class Pack(NamedTuple):
+    lists: bytes
+    places: bytes
 
 
 type Places = dict[str, dict[int, list[int]]]
@@ -68,7 +74,8 @@ def chunks_at(transaction: Reading) -> dict[int, int]:
 def stored(transaction: Reading) -> Places:
     chunk_at = chunks_at(transaction)
     gone = set(ints(dead_within(transaction, 0, 2**63 - 1)))
-    every = sorted({row.term for row in rows(transaction, Term, "SELECT DISTINCT term FROM keyword_postings")})
+    packs = rows(transaction, Pack, "SELECT lists, places FROM keyword_packs")
+    every = sorted({term for pack in packs for term, *_ in packed(pack.lists, pack.places)})
     held: Places = {}
     for part in parts(transaction, every):
         found = (
@@ -144,7 +151,7 @@ def chunk_tokens(transaction: Reading) -> dict[int, int]:
 def staled(connection: Connection) -> None:
     with writing(connection) as transaction:
         run(transaction, "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
-        run(transaction, "DELETE FROM keyword_postings")
+        run(transaction, "DELETE FROM keyword_packs")
 
 
 MERGING = Batches(chunks_a_segment=2, documents_a_forget=1, postings_a_merge=3, merging=Policy(factor=2, floor=1))

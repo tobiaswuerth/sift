@@ -132,6 +132,8 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `native::lists` | `MOST_POSITION` | `1 << 32` |
 | `native::numbers` | `MOST_BYTES` | `9` |
 | `native::packed` | `MOST_INFLATED` | `64 << 20` |
+| `native::packs` | `PACK_BYTES` | `4000` |
+| `native::packs` | `MOST_NUMBER_BYTES` | `9` |
 | `native::postings` | `MOST_RANGE_SHIFT` | `8` |
 | `native::postings` | `MOST_BLOCK` | `1 << 12` |
 | `native::postings` | `MOST_LENGTHS_SHIFT` | `20` |

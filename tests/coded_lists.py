@@ -39,3 +39,45 @@ def placed(positions: Sequence[Sequence[int]]) -> bytes:
 def ranges(ids: Sequence[int], sizes: Sequence[int], best: Sequence[int]) -> bytes:
     fewer = bytes(size - 1 for size in sizes)
     return zlib.compress(RANGES_HEAD.pack(ids[0], len(ids)) + _gaps(ids) + fewer + bytes(best))
+
+
+type PackedEntry = tuple[str, int, bytes, bytes]
+
+
+def _number(data: bytes, at: int) -> tuple[int, int]:
+    found = shift = 0
+    while True:
+        byte = data[at]
+        found |= (byte & 0x7F) << shift
+        at, shift = at + 1, shift + 7
+        if byte < 0x80:
+            return found, at
+
+
+def packed(lists: bytes, places: bytes) -> list[PackedEntry]:
+    (count,) = struct.unpack_from("<I", lists)
+    heads: list[tuple[str, int, int, int]] = []
+    at = 4
+    for _ in range(count):
+        named, at = _number(lists, at)
+        term, at = lists[at : at + named].decode(), at + named
+        chunks, at = _number(lists, at)
+        listed, at = _number(lists, at)
+        held, at = _number(lists, at)
+        heads.append((term, chunks, listed, held))
+    found: list[PackedEntry] = []
+    placed = 0
+    for term, chunks, listed, held in heads:
+        found.append((term, chunks, lists[at : at + listed], places[placed : placed + held]))
+        at, placed = at + listed, placed + held
+    assert (at, placed) == (len(lists), len(places))
+    return found
+
+
+def pack(entries: Sequence[PackedEntry]) -> tuple[bytes, bytes]:
+    heads = b"".join(
+        varint(len(term.encode())) + term.encode() + varints([chunks, len(postings), len(positions)])
+        for term, chunks, postings, positions in entries
+    )
+    lists = struct.pack("<I", len(entries)) + heads + b"".join(each[2] for each in entries)
+    return lists, b"".join(each[3] for each in entries)

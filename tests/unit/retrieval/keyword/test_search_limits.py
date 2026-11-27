@@ -13,7 +13,7 @@ from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Opened, PostingArrays, Ranged, opened, stored
 from sift.retrieval.keyword.search import Prepared, Tuning, planned, prepared, query_of, searched
 from sift.storage.database import rows
-from tests.coded_lists import block, ranges
+from tests.coded_lists import block, pack, packed, ranges
 from tests.examples import few
 from tests.keyword_searches import (
     SEEDS,
@@ -22,6 +22,11 @@ from tests.keyword_searches import (
     prose,
     search,
 )
+
+
+class Pack(NamedTuple):
+    lists: bytes
+    places: bytes
 
 
 class Block(NamedTuple):
@@ -57,7 +62,7 @@ def test_the_positions_of_a_short_list_gone_since_the_list_was_read_are_damage()
     with collections([[notes]]) as (stores, _):
         (store,) = stores
         plan = planned(store, Phrase(("alpha", "beta")))
-        store.transaction.connection.execute("DELETE FROM keyword_postings WHERE term = 'beta'")
+        store.transaction.connection.execute("DELETE FROM keyword_packs")
         with pytest.raises(DamagedError, match="a list of positions is missing from the keyword index"):
             prepared(plan)
 
@@ -67,7 +72,7 @@ def test_ranges_outside_their_segment_are_damage(place: int) -> None:
     far = ranges([place], [1], [0])
     with collections([[prose(Draws(np.random.default_rng(7)), 60)]]) as (stores, _):
         (store,) = stores
-        store.transaction.connection.execute("UPDATE keyword_postings SET ranges = ? WHERE ranges IS NOT NULL", (far,))
+        store.transaction.connection.execute("UPDATE keyword_ranges SET ranges = ?", (far,))
         with pytest.raises(DamagedError, match="outside its segment"):
             search(stores, Term("w0"), 10)
 
@@ -243,7 +248,9 @@ def test_a_block_whose_postings_lie_outside_its_ranges_is_damage() -> None:
 
 def test_a_short_list_of_other_than_its_count_is_damage() -> None:
     with collections([[{"a.md": ("", "A", "w1"), "b.md": ("", "B", "w1")}]]) as (stores, _):
-        stores[0].transaction.connection.execute("UPDATE keyword_postings SET chunks = 3 WHERE term = 'w1'")
+        (held,) = rows(stores[0].transaction, Pack, "SELECT lists, places FROM keyword_packs")
+        miscounted = [(term, 3 if term == "w1" else count, coded, own) for term, count, coded, own in packed(*held)]
+        stores[0].transaction.connection.execute("UPDATE keyword_packs SET lists = ?", (pack(miscounted)[0],))
         with pytest.raises(DamagedError, match="the list of 'w1' holds 2 passages, not its 3"):
             search(stores, Term("w1"), 10)
 

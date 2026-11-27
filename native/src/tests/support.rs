@@ -3,7 +3,8 @@ use std::sync::{Arc, LazyLock};
 
 use crate::lists::{Coded, block, gaps, placed};
 use crate::merge::{Fed, Merger};
-use crate::postings::{Kept, Piece, Row, Shape};
+use crate::packs::entries;
+use crate::postings::{Filed, Shape};
 use crate::segment::{Held, Passages, Written};
 use crate::words::Table;
 
@@ -15,10 +16,17 @@ pub const AVERAGE: f64 = 4.0;
 pub type Decoded = (Vec<i64>, Vec<i64>, Vec<i64>);
 pub type Shown = (String, usize, Option<Coded>, Option<Vec<u8>>);
 pub type ShownBlock = (String, usize, Coded);
+pub type Told = (Vec<String>, Vec<Shown>, Vec<ShownBlock>);
+
+type Left = (VecDeque<(Vec<u8>, Vec<u8>)>, VecDeque<Fed>);
+
+pub struct Feed {
+    pub packs: Vec<(Vec<u8>, Vec<u8>)>,
+    pub blocks: Vec<Fed>,
+}
 
 pub struct Outcome {
-    pub rows: Vec<Row>,
-    pub pieces: Vec<Piece>,
+    pub filed: Filed,
     pub steps: Vec<Vec<String>>,
 }
 
@@ -76,6 +84,35 @@ pub fn built(texts: &[(i64, &str)], shape: Shape) -> Result<Written, String> {
     held.written(AVERAGE, shape)
 }
 
+pub fn shown(filed: &Filed) -> Result<Told, String> {
+    let (mut firsts, mut lists) = (Vec::new(), Vec::new());
+    for pack in &filed.packs {
+        firsts.push(pack.first.to_string());
+        for each in entries(&pack.lists, Some(&pack.places))? {
+            let coded = (each.postings.to_vec(), each.positions.to_vec());
+            let ranges = filed.ranged.iter().find(|held| &*held.term == each.term);
+            let short = (!each.postings.is_empty()).then_some(coded);
+            lists.push((
+                each.term.to_owned(),
+                each.chunks,
+                short,
+                ranges.map(|held| held.ranges.clone()),
+            ));
+        }
+    }
+    let mut blocks: Vec<ShownBlock> = filed
+        .blocks
+        .iter()
+        .map(|each| (each.0.to_string(), each.1, each.2.clone()))
+        .collect();
+    blocks.sort();
+    Ok((firsts, lists, blocks))
+}
+
+pub fn terms(filed: &Filed) -> Result<Vec<String>, String> {
+    Ok(shown(filed)?.1.into_iter().map(|each| each.0).collect())
+}
+
 fn listed(coded: &Coded, found: &mut Decoded) -> Result<(), String> {
     let held = block(&coded.0)?;
     let mut places = gaps(&coded.1)?;
@@ -86,94 +123,94 @@ fn listed(coded: &Coded, found: &mut Decoded) -> Result<(), String> {
     Ok(())
 }
 
-pub fn decoded(row: &Row) -> Result<Decoded, String> {
+pub fn decoded(filed: &Filed, term: &str) -> Result<(usize, Decoded), String> {
+    let (_, lists, blocks) = shown(filed)?;
+    let held = lists.iter().find(|each| each.0 == term);
+    let held = held.ok_or_else(|| format!("the segment holds no list of {term}"))?;
     let mut found = Decoded::default();
-    match &row.held {
-        Kept::Short(coded) => listed(coded, &mut found)?,
-        Kept::Long { blocks, .. } => {
-            for coded in blocks {
-                listed(coded, &mut found)?;
+    match &held.2 {
+        Some(coded) => listed(coded, &mut found)?,
+        None => {
+            for each in blocks.iter().filter(|each| each.0 == term) {
+                listed(&each.2, &mut found)?;
             }
         }
     }
-    Ok(found)
+    Ok((held.1, found))
 }
 
-pub fn row<'a>(made: &'a Written, term: &str) -> Result<&'a Row, String> {
-    let found = made.rows.iter().find(|row| &*row.term == term);
-    found.ok_or_else(|| format!("the segment holds no list of {term}"))
+pub fn long(filed: &Filed, term: &str) -> usize {
+    filed.blocks.iter().filter(|each| &*each.0 == term).count()
 }
 
-pub fn shown(rows: &[Row], pieces: &[Piece]) -> (Vec<Shown>, Vec<ShownBlock>) {
-    let (mut lists, mut blocks) = (Vec::new(), Vec::new());
-    for row in rows {
-        match &row.held {
-            Kept::Short(coded) => lists.push((row.term.to_string(), row.chunks, Some(coded.clone()), None)),
-            Kept::Long { ranges, blocks: held } => {
-                lists.push((row.term.to_string(), row.chunks, None, Some(ranges.clone())));
-                for (number, coded) in held.iter().enumerate() {
-                    blocks.push((row.term.to_string(), number, coded.clone()));
-                }
-            }
-        }
+pub fn sources(made: &Written, shape: Shape) -> Feed {
+    let packs = made
+        .filed
+        .packs
+        .iter()
+        .map(|pack| (pack.lists.clone(), pack.places.clone()));
+    let blocks = made.filed.blocks.iter().map(|(term, _, coded)| Fed {
+        term: Arc::clone(term),
+        chunks: shape.block(),
+        postings: coded.0.clone(),
+        positions: coded.1.clone(),
+    });
+    Feed {
+        packs: packs.collect(),
+        blocks: blocks.collect(),
     }
-    for (term, number, coded) in pieces {
-        blocks.push((term.to_string(), *number, coded.clone()));
-    }
-    blocks.sort();
-    (lists, blocks)
 }
 
-pub fn sources(made: &Written, shape: Shape) -> Vec<Vec<Fed>> {
-    let (mut short, mut blocks) = (Vec::new(), Vec::new());
-    for row in &made.rows {
-        let term: Arc<str> = Arc::from(&*row.term);
-        match &row.held {
-            Kept::Short(coded) => short.push(Fed {
-                term,
-                chunks: row.chunks,
-                postings: coded.0.clone(),
-                positions: coded.1.clone(),
-            }),
-            Kept::Long { blocks: held, .. } => {
-                for coded in held {
-                    blocks.push(Fed {
-                        term: Arc::clone(&term),
-                        chunks: shape.block(),
-                        postings: coded.0.clone(),
-                        positions: coded.1.clone(),
-                    });
-                }
-            }
-        }
+pub fn fed_whole(merger: &mut Merger, given: Vec<Feed>) -> Result<(), String> {
+    for (number, each) in given.into_iter().enumerate() {
+        merger.fed_packs(2 * number, &each.packs)?;
+        merger.fed(2 * number + 1, each.blocks);
+        merger.ended(2 * number);
+        merger.ended(2 * number + 1);
     }
-    vec![short, blocks]
+    Ok(())
 }
 
-pub fn merged(merger: &mut Merger, given: Vec<Vec<Fed>>, at_once: usize) -> Result<Outcome, String> {
-    let mut left: Vec<VecDeque<Fed>> = given.into_iter().map(VecDeque::from).collect();
+pub fn merged(merger: &mut Merger, given: Vec<Feed>, at_once: usize) -> Result<Outcome, String> {
+    let mut left: Vec<Left> = given
+        .into_iter()
+        .map(|each| (each.packs.into(), each.blocks.into()))
+        .collect();
     let mut made = Outcome {
-        rows: Vec::new(),
-        pieces: Vec::new(),
+        filed: Filed::default(),
         steps: Vec::new(),
     };
     loop {
         let step = merger.stepped()?;
-        made.steps
-            .push(step.rows.iter().map(|row| row.term.to_string()).collect());
-        made.rows.extend(step.rows);
-        made.pieces.extend(step.pieces);
+        made.steps.push(terms(&step.filed)?);
+        made.filed.packs.extend(step.filed.packs);
+        made.filed.ranged.extend(step.filed.ranged);
+        made.filed.blocks.extend(step.filed.blocks);
         if step.done {
             return Ok(made);
         }
         for source in step.wanted {
-            let rows = left
-                .get_mut(source)
-                .ok_or_else(|| "a merge asked for a source it has not".to_owned())?;
-            while merger
-                .fed(source, (0..at_once).map_while(|_| rows.pop_front()).collect())
-                .ok_or_else(|| "a merge refused a source it asked for".to_owned())?
-            {}
+            let Some(held) = left.get_mut(source / 2) else {
+                return Err("a merge asked for a source it has not".to_owned());
+            };
+            let mut more = Some(true);
+            while more == Some(true) {
+                more = if source % 2 == 0 {
+                    let packs: Vec<(Vec<u8>, Vec<u8>)> = (0..at_once).map_while(|_| held.0.pop_front()).collect();
+                    if packs.is_empty() {
+                        merger.ended(source)
+                    } else {
+                        merger.fed_packs(source, &packs)?
+                    }
+                } else {
+                    let rows: Vec<Fed> = (0..at_once).map_while(|_| held.1.pop_front()).collect();
+                    if rows.is_empty() {
+                        merger.ended(source)
+                    } else {
+                        merger.fed(source, rows)
+                    }
+                };
+            }
         }
     }
 }

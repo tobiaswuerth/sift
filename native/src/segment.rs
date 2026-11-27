@@ -2,7 +2,8 @@ use rayon::prelude::*;
 
 use crate::numbers::narrow;
 use crate::packed::deflated;
-use crate::postings::{MOST_LENGTHS_SHIFT, Postings, Row, Shape, joined};
+use crate::packs::Packer;
+use crate::postings::{Filed, MOST_LENGTHS_SHIFT, Postings, Row, Shape, joined};
 use crate::words::{Table, Terms};
 
 const MOST_TIMES: usize = 1024;
@@ -18,7 +19,8 @@ pub struct Passages<'a> {
 }
 
 pub struct Written {
-    pub rows: Vec<Row>,
+    pub filed: Filed,
+    pub terms: Vec<(Box<str>, usize)>,
     pub lengths: Vec<(i64, Vec<u8>)>,
 }
 
@@ -226,9 +228,12 @@ impl Held {
             })
             .collect();
         let lengths = lengths_written(&self.ids, &self.lengths, shape.lengths_shift())?;
-        Ok(Written {
-            rows: rows?.into_iter().flatten().collect(),
-            lengths,
-        })
+        let (mut filed, mut packer, mut terms) = (Filed::default(), Packer::default(), Vec::new());
+        for row in rows?.into_iter().flatten() {
+            terms.push((row.term.clone(), row.chunks));
+            filed.take(&mut packer, row)?;
+        }
+        filed.close(&mut packer)?;
+        Ok(Written { filed, terms, lengths })
     }
 }

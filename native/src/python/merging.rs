@@ -7,6 +7,8 @@ use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
 use crate::merge::{Chunks, Fed, Limits, Merger};
 use crate::python::{Listed, lengths_of, listed, numbers_of, shaped};
 
+const UNKNOWN: &str = "a merge was fed rows of a source it has not";
+
 type Given = (PyBackedStr, usize, PyBackedBytes, PyBackedBytes);
 type Stepped<'py> = (Listed<'py>, Vec<usize>, bool);
 
@@ -46,7 +48,7 @@ impl Merging {
 
     fn feed(&mut self, source: usize, rows: &Bound<'_, PyAny>) -> PyResult<bool> {
         let given: Vec<Given> = rows.extract()?;
-        let rows = given
+        let rows: Vec<Fed> = given
             .into_iter()
             .map(|(term, chunks, postings, positions)| Fed {
                 term: Arc::from(&*term),
@@ -55,12 +57,26 @@ impl Merging {
                 positions: positions.to_vec(),
             })
             .collect();
-        let more = self.held.fed(source, rows);
-        more.ok_or_else(|| PyIndexError::new_err("a merge was fed rows of a source it has not"))
+        let more = if rows.is_empty() {
+            self.held.ended(source)
+        } else {
+            self.held.fed(source, rows)
+        };
+        more.ok_or_else(|| PyIndexError::new_err(UNKNOWN))
+    }
+
+    fn feed_packs(&mut self, source: usize, rows: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let packs: Vec<(PyBackedBytes, PyBackedBytes)> = rows.extract()?;
+        let more = if packs.is_empty() {
+            self.held.ended(source)
+        } else {
+            self.held.fed_packs(source, &packs).map_err(PyValueError::new_err)?
+        };
+        more.ok_or_else(|| PyIndexError::new_err(UNKNOWN))
     }
 
     fn step<'py>(&mut self, py: Python<'py>, segment: i64) -> PyResult<Stepped<'py>> {
         let step = py.detach(|| self.held.stepped()).map_err(PyValueError::new_err)?;
-        Ok((listed(py, segment, &step.rows, &step.pieces)?, step.wanted, step.done))
+        Ok((listed(py, segment, &step.filed)?, step.wanted, step.done))
     }
 }

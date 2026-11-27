@@ -99,14 +99,18 @@ LAYOUT: tuple[Migration, ...] = (
                 dead INTEGER NOT NULL CHECK (dead BETWEEN 0 AND chunks),
                 average REAL NOT NULL CHECK (average >= 0)
             ) STRICT""",
-            """CREATE TABLE keyword_postings(
+            """CREATE TABLE keyword_packs(
+                segment INTEGER NOT NULL REFERENCES keyword_segments(id) ON DELETE CASCADE,
+                first TEXT NOT NULL,
+                lists BLOB NOT NULL,
+                places BLOB NOT NULL,
+                PRIMARY KEY(segment, first)
+            ) STRICT""",
+            """CREATE TABLE keyword_ranges(
                 segment INTEGER NOT NULL REFERENCES keyword_segments(id) ON DELETE CASCADE,
                 term TEXT NOT NULL,
                 chunks INTEGER NOT NULL CHECK (chunks > 0),
-                postings BLOB,
-                positions BLOB,
-                ranges BLOB,
-                CHECK ((postings IS NULL) = (positions IS NULL) AND (postings IS NULL) <> (ranges IS NULL)),
+                ranges BLOB NOT NULL,
                 PRIMARY KEY(segment, term)
             ) STRICT""",
             """CREATE TABLE keyword_blocks(

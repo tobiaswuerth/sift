@@ -1,14 +1,21 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::pybacked::PyBackedBytes;
-use pyo3::types::{PyBytes, PyList};
+use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
+use pyo3::types::{PyBytes, PyList, PyString};
 
 use crate::lists::{blocks, places};
 use crate::numbers::little_endian;
+use crate::packs::entries;
 use crate::python::{lengths_of, numbers_of};
 use crate::segment::lengths_written;
 
 type Blocked<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Vec<usize>);
+type Unpacked<'py> = (
+    Bound<'py, PyString>,
+    usize,
+    Option<Bound<'py, PyBytes>>,
+    Option<Bound<'py, PyBytes>>,
+);
 
 #[pyfunction]
 pub fn blocked_all<'py>(each: &Bound<'py, PyAny>) -> PyResult<Blocked<'py>> {
@@ -23,6 +30,31 @@ pub fn positions_all<'py>(each: &Bound<'py, PyAny>, counts: &Bound<'py, PyAny>) 
     let (py, rows, counts) = (each.py(), each.extract::<Vec<PyBackedBytes>>()?, numbers_of(counts)?);
     let found = py.detach(|| places(&rows, &counts).map(|found| little_endian(&found)));
     Ok(PyBytes::new(py, &found.map_err(PyValueError::new_err)?))
+}
+
+#[pyfunction]
+pub fn unpacked<'py>(
+    lists: &Bound<'py, PyAny>,
+    places: &Bound<'py, PyAny>,
+    terms: &Bound<'py, PyAny>,
+) -> PyResult<Vec<Unpacked<'py>>> {
+    let (py, lists, terms) = (
+        lists.py(),
+        lists.extract::<PyBackedBytes>()?,
+        terms.extract::<Vec<PyBackedStr>>()?,
+    );
+    let places: Option<PyBackedBytes> = places.extract()?;
+    let found = entries(&lists, places.as_deref()).map_err(PyValueError::new_err)?;
+    let wanted = found
+        .iter()
+        .filter(|each| terms.iter().any(|term| &**term == each.term));
+    let told = wanted.map(|each| {
+        let short = (!each.postings.is_empty()).then(|| PyBytes::new(py, each.postings));
+        let positions = short.as_ref().and(places.as_ref());
+        let positions = positions.map(|_| PyBytes::new(py, each.positions));
+        (PyString::new(py, each.term), each.chunks, short, positions)
+    });
+    Ok(told.collect())
 }
 
 #[pyfunction]

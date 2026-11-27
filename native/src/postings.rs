@@ -5,6 +5,7 @@ use rayon::prelude::*;
 use crate::lists::{Coded, Lists, list};
 use crate::numbers::narrow;
 use crate::packed::deflated;
+use crate::packs::{Pack, Packer};
 
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
@@ -43,12 +44,54 @@ pub struct Row {
 
 pub type Piece = (Arc<str>, usize, Coded);
 
+pub struct Ranged {
+    pub term: Box<str>,
+    pub chunks: usize,
+    pub ranges: Vec<u8>,
+}
+
+#[derive(Default)]
+pub struct Filed {
+    pub packs: Vec<Pack>,
+    pub ranged: Vec<Ranged>,
+    pub blocks: Vec<Piece>,
+}
+
 pub struct Postings {
     places: Vec<i64>,
     counts: Vec<i64>,
     positions: Vec<i64>,
     offsets: Vec<usize>,
     sizes: Vec<u32>,
+}
+
+impl Filed {
+    pub fn take(&mut self, packer: &mut Packer, row: Row) -> Result<(), String> {
+        match row.held {
+            Kept::Short(coded) => {
+                let closed = packer.push(&row.term, row.chunks, Some((&coded.0, &coded.1)))?;
+                self.packs.extend(closed);
+            }
+            Kept::Long { ranges, blocks } => {
+                self.packs.extend(packer.push(&row.term, row.chunks, None)?);
+                let term: Arc<str> = Arc::from(&*row.term);
+                let numbered = blocks.into_iter().enumerate();
+                self.blocks
+                    .extend(numbered.map(|(number, coded)| (Arc::clone(&term), number, coded)));
+                self.ranged.push(Ranged {
+                    term: row.term,
+                    chunks: row.chunks,
+                    ranges,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn close(&mut self, packer: &mut Packer) -> Result<(), String> {
+        self.packs.extend(packer.finished()?);
+        Ok(())
+    }
 }
 
 impl Shape {

@@ -13,6 +13,7 @@ from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows, run, writing
+from sift.storage.keyword_lists import parts
 from sift.storage.keywords import TAKEN_OVER_REMEDY, remade, remake_started, settle
 from tests.examples import few
 from tests.keyword_indexes import (
@@ -21,7 +22,6 @@ from tests.keyword_indexes import (
     NOTES,
     PAIRS,
     Sized,
-    Term,
     checked,
     content,
     rounds,
@@ -65,8 +65,11 @@ class Stored(NamedTuple):
     ranges: bytes | None
 
 
-STORED = """SELECT s.first, p.term, -1, p.chunks, p.postings, p.positions, p.ranges
-            FROM keyword_postings p JOIN keyword_segments s ON s.id = p.segment
+STORED = """SELECT s.first, p.first, -2, 0, p.lists, p.places, NULL
+            FROM keyword_packs p JOIN keyword_segments s ON s.id = p.segment
+            UNION ALL
+            SELECT s.first, r.term, -1, r.chunks, NULL, NULL, r.ranges
+            FROM keyword_ranges r JOIN keyword_segments s ON s.id = r.segment
             UNION ALL
             SELECT s.first, b.term, b.number, 0, b.postings, b.positions, NULL
             FROM keyword_blocks b JOIN keyword_segments s ON s.id = b.segment
@@ -152,6 +155,27 @@ def test_a_merge_reads_a_few_rows_of_each_segment_at_a_time_however_many_it_hold
         checked(connection)
 
 
+class PackSize(NamedTuple):
+    size: int
+
+
+def test_the_short_lists_of_a_segment_are_stored_many_to_a_row_none_larger_than_a_page() -> None:
+    terms, a_page = 3_000, 4_000
+    words = {name: ("", name, " ".join(f"w{n}{name}" for n in range(terms))) for name in ("a", "b")}
+    kept_apart = Batches(merging=Policy(factor=10, floor=10**6))
+    sized = "SELECT length(first) + length(lists) + length(places) FROM keyword_packs"
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, Shape()) as connection:
+        applied(connection, [{"a.md": words["a"]}, {"b.md": words["b"]}], kept_apart)
+        for merged in (False, True):
+            with reading(connection) as transaction:
+                sizes = [each.size for each in rows(transaction, PackSize, sized)]
+            assert max(sizes) <= a_page
+            assert len(sizes) <= 2 + 2 * sum(sizes) // a_page < 2 * terms // 20
+            if not merged:
+                assert list(settle(connection, Batches(merging=Policy(factor=2, floor=1, span=0.0))))[-1] > 0
+        checked(connection)
+
+
 def test_one_chunk_written_at_a_time_merges_like_a_binary_counter() -> None:
     batches = Batches(merging=Policy(factor=2, floor=1, span=0.0))
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
@@ -209,7 +233,7 @@ def test_a_term_only_dead_chunks_held_is_gone_after_a_merge(postings: int) -> No
         applied(connection, [{"d.md": common, "e.md": common}], batches)
         assert settled(connection, batches.merging) == [Sized(4, 0)]
         with reading(connection) as transaction:
-            assert rows(transaction, Term, "SELECT term FROM keyword_postings WHERE term = 'solo'") == []
+            assert [part.term for part in parts(transaction, ["solo", "common"])] == ["common"]
         checked(connection)
 
 

@@ -24,7 +24,7 @@ from tests.keyword_stores import SMALL, applied, opened_store
 QUERY = Or(
     (Term("w0"), Term("w1"), Phrase(("w0", "w1")), Phrase(("w2", "w0")), Phrase(("w0", "w15")), Phrase(("w25", "w0")))
 )
-READS = ("keyword_lengths", "keyword_blocks", "positions FROM keyword_postings")
+READS = ("keyword_lengths", "keyword_blocks", "lists, places FROM keyword_packs")
 
 
 @contextmanager

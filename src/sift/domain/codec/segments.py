@@ -17,8 +17,16 @@ DROPPED = 0xFFFFFFFF
 
 type Building = _native.Building
 type Merger = _native.Merger
-type ListsRow = tuple[int, str, int, bytes | None, bytes | None, bytes | None]
+type PackRow = tuple[int, str, bytes, bytes]
+type RangedRow = tuple[int, str, int, bytes]
 type ListBlockRow = tuple[int, str, int, bytes, bytes]
+
+
+@dataclass(frozen=True, slots=True)
+class FiledLists:
+    packs: Sequence[PackRow]
+    ranged: Sequence[RangedRow]
+    blocks: Sequence[ListBlockRow]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,10 +36,16 @@ class WrittenSegment:
     chunks: int
     tokens: int
     average: float
-    lists: Sequence[ListsRow]
-    blocks: Sequence[ListBlockRow]
+    filed: FiledLists
     lengths: Sequence[tuple[int, int, bytes]]
     terms: Sequence[tuple[str, int]]
+
+
+class PackedList(NamedTuple):
+    term: str
+    chunks: int
+    postings: bytes | None
+    positions: bytes | None
 
 
 def stream(title: Sequence[str], text: Sequence[str], meta: Sequence[str]) -> list[str]:
@@ -71,8 +85,7 @@ class MergeLimits:
 
 @dataclass(frozen=True, slots=True)
 class MergeStep:
-    lists: Sequence[ListsRow]
-    blocks: Sequence[ListBlockRow]
+    filed: FiledLists
     wanted: Sequence[int]
     done: bool
 
@@ -90,12 +103,30 @@ def fed(held: Merger, source: int, rows: Sequence[tuple[object, ...]]) -> bool:
         raise DamagedError("the keyword index holds a row that is no list of a term") from None
 
 
-def stepped(held: Merger, segment: int) -> MergeStep:
+def fed_packs(held: Merger, source: int, rows: Sequence[tuple[object, ...]]) -> bool:
     try:
-        (lists, blocks), wanted, done = held.step(segment)
+        return held.feed_packs(source, rows)
+    except TypeError:
+        raise DamagedError("the keyword index holds a row that is no pack of lists") from None
     except ValueError as error:
         raise DamagedError(str(error)) from None
-    return MergeStep(lists, blocks, wanted, done)
+
+
+def stepped(held: Merger, segment: int) -> MergeStep:
+    try:
+        found, wanted, done = held.step(segment)
+    except ValueError as error:
+        raise DamagedError(str(error)) from None
+    return MergeStep(FiledLists(*found), wanted, done)
+
+
+def unpacked(lists: bytes, places: bytes | None, terms: Sequence[str]) -> list[PackedList]:
+    try:
+        return [PackedList(*each) for each in _native.unpacked(lists, places, terms)]
+    except TypeError:
+        raise DamagedError("the keyword index holds a row that is no pack of lists") from None
+    except ValueError as error:
+        raise DamagedError(str(error)) from None
 
 
 class Collected(NamedTuple):
@@ -114,5 +145,6 @@ def gathered(built: Building) -> Collected:
 
 def written(built: Building, segment: int, average: float, shape: Shape = SHAPE) -> WrittenSegment:
     held = gathered(built)
-    (lists, blocks), lengths, terms = built.written(segment, average, _shaped(shape))
-    return WrittenSegment(held.first, held.last, held.chunks, held.tokens, average, lists, blocks, lengths, terms)
+    found, lengths, terms = built.written(segment, average, _shaped(shape))
+    filed = FiledLists(*found)
+    return WrittenSegment(held.first, held.last, held.chunks, held.tokens, average, filed, lengths, terms)

@@ -148,7 +148,7 @@ def test_a_collection_not_embedded_gives_keyword_candidates_alone(tmp_path: Path
 
 
 def damaged_keywords(store: Path) -> None:
-    damage_table(store, "keyword_postings")
+    damage_table(store, "keyword_packs")
 
 
 def damaged_documents(store: Path) -> None:

@@ -1,10 +1,10 @@
 use crate::packed::{PACKED, unwrapped};
-use crate::postings::Kept;
 use crate::segment::{Held, Passages, lengths_written};
-use crate::tests::support::{AVERAGE, built, decoded, refused, row, small, table, wide, words};
+use crate::tests::support::{AVERAGE, built, decoded, long, refused, small, table, terms, wide, words};
 use crate::words::Table;
 
 const MOST_TIMES: usize = 1024;
+const PACK_BYTES: usize = 4000;
 
 fn lengths(packed: &[u8]) -> Result<Vec<u32>, String> {
     let wrapped: Vec<u8> = [PACKED].into_iter().chain(packed.iter().copied()).collect();
@@ -28,10 +28,15 @@ fn a_table_of_words_holds_every_point_and_a_text_is_cut_and_folded_by_it() -> Re
 #[test]
 fn a_segment_holds_where_each_term_occurs_and_how_long_each_passage_is() -> Result<(), String> {
     let made = built(&[(7, "one two two"), (9, "two three")], wide()?)?;
-    let terms: Vec<&str> = made.rows.iter().map(|row| &*row.term).collect();
-    assert_eq!(terms, ["one", "three", "two"]);
-    assert_eq!(decoded(row(&made, "two")?)?, (vec![7, 9], vec![2, 1], vec![2, 3, 1]));
-    assert_eq!(row(&made, "two")?.chunks, 2);
+    assert_eq!(terms(&made.filed)?, ["one", "three", "two"]);
+    assert_eq!(
+        made.terms.iter().map(|each| (&*each.0, each.1)).collect::<Vec<_>>(),
+        [("one", 1), ("three", 1), ("two", 2)]
+    );
+    assert_eq!(
+        decoded(&made.filed, "two")?,
+        (2, (vec![7, 9], vec![2, 1], vec![2, 3, 1]))
+    );
     let [(block, packed)] = &made.lengths[..] else {
         return Err("passages 7 and 9 lie in one block of lengths".to_owned());
     };
@@ -40,14 +45,42 @@ fn a_segment_holds_where_each_term_occurs_and_how_long_each_passage_is() -> Resu
 }
 
 #[test]
-fn a_term_of_many_passages_is_kept_in_blocks() -> Result<(), String> {
+fn a_term_of_many_passages_is_kept_in_blocks_under_its_ranges() -> Result<(), String> {
     let made = built(&[(1, "w"), (2, "w"), (5, "w x"), (6, "w"), (9, "w")], small()?)?;
-    assert!(matches!(row(&made, "x")?.held, Kept::Short(_)));
-    let Kept::Long { blocks, .. } = &row(&made, "w")?.held else {
-        return Err("a term of five passages is long in a shape of three".to_owned());
+    assert_eq!((long(&made.filed, "x"), long(&made.filed, "w")), (0, 3));
+    assert_eq!(
+        made.filed
+            .ranged
+            .iter()
+            .map(|each| (&*each.term, each.chunks))
+            .collect::<Vec<_>>(),
+        [("w", 5)]
+    );
+    assert_eq!(decoded(&made.filed, "w")?.1.0, [1, 2, 5, 6, 9]);
+    assert_eq!(decoded(&made.filed, "x")?, (1, (vec![5], vec![1], vec![2])));
+    Ok(())
+}
+
+#[test]
+fn the_short_lists_of_a_segment_lie_many_to_a_pack_none_larger_than_a_page() -> Result<(), String> {
+    let body = |place: i64| {
+        (0..50)
+            .map(|word| format!("w{place}x{word}"))
+            .collect::<Vec<_>>()
+            .join(" ")
     };
-    assert_eq!(blocks.len(), 3);
-    assert_eq!(decoded(row(&made, "w")?)?.0, [1, 2, 5, 6, 9]);
+    let texts: Vec<(i64, String)> = (0..40).map(|place| (place, body(place))).collect();
+    let borrowed: Vec<(i64, &str)> = texts.iter().map(|each| (each.0, &*each.1)).collect();
+    let made = built(&borrowed, wide()?)?;
+    let held: Vec<usize> = made
+        .filed
+        .packs
+        .iter()
+        .map(|pack| pack.first.len() + pack.lists.len() + pack.places.len())
+        .collect();
+    assert_eq!(terms(&made.filed)?.len(), 2000);
+    assert!(held.iter().all(|&each| each <= PACK_BYTES));
+    assert!(held.len() < 2000 / 50 && held.iter().sum::<usize>() > (held.len() - 1) * (PACK_BYTES - 100));
     Ok(())
 }
 
@@ -66,10 +99,10 @@ fn a_segment_takes_the_words_of_title_and_fields_around_those_of_the_text() -> R
         (2, Some(3), Some(4), 7)
     );
     let made = held.written(AVERAGE, wide()?)?;
-    assert_eq!(decoded(row(&made, "title")?)?, (vec![3, 4], vec![1, 1], vec![0, 0]));
-    assert_eq!(decoded(row(&made, "body")?)?, (vec![3, 4], vec![1, 1], vec![2, 3]));
-    assert_eq!(decoded(row(&made, "meta")?)?, (vec![3, 4], vec![1, 1], vec![4, 5]));
-    assert!(row(&made, "words").is_err());
+    assert_eq!(decoded(&made.filed, "title")?.1, (vec![3, 4], vec![1, 1], vec![0, 0]));
+    assert_eq!(decoded(&made.filed, "body")?.1, (vec![3, 4], vec![1, 1], vec![2, 3]));
+    assert_eq!(decoded(&made.filed, "meta")?.1, (vec![3, 4], vec![1, 1], vec![4, 5]));
+    assert!(decoded(&made.filed, "words").is_err());
     Ok(())
 }
 
@@ -87,7 +120,7 @@ fn a_segment_takes_passages_until_it_holds_the_tokens_asked_and_a_word_no_more_o
     assert_eq!(held.taken(table()?, &passages)?, 1);
     assert_eq!(held.taken(table()?, &passages)?, 0);
     let made = held.written(AVERAGE, wide()?)?;
-    assert_eq!(decoded(row(&made, "x")?)?.1, [1024]);
+    assert_eq!(decoded(&made.filed, "x")?.1.1, [1024]);
     Ok(())
 }
 
