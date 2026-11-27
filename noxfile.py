@@ -112,7 +112,7 @@ def kernel(session: nox.Session) -> None:
     synced(session)
     session.run("cargo", "install", "cargo-llvm-cov", "--locked", f"--version={LLVM_COV}", external=True)
     env = instrumented(session)
-    session.run("cargo", "llvm-cov", "clean", f"--manifest-path={CRATE}", "--profraw-only", external=True, env=env)
+    session.run("cargo", "llvm-cov", "clean", f"--manifest-path={CRATE}", "--workspace", external=True, env=env)
     session.run("cargo", "test", f"--manifest-path={CRATE}", "--locked", "--release", external=True, env=env)
     dist = Path(CRATE_COVERAGE) / "wheel"
     session.run(

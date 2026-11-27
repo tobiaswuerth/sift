@@ -64,3 +64,9 @@ def test_ci_holds_the_crate_to_its_tests_with_the_coverage_tool_of_the_version_i
     assert '"cargo-llvm-cov", "--locked", f"--version={LLVM_COV}"' in noxfile
     assert "KERNEL: ${{ needs.kernel.result }}" in job(ci, "tests")
     assert '"llvm-tools-preview"' in (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
+
+
+def test_the_crate_s_coverage_counts_no_build_of_it_left_from_before() -> None:
+    noxfile = (ROOT / "noxfile.py").read_text(encoding="utf-8")
+    assert '"cargo", "llvm-cov", "clean", f"--manifest-path={CRATE}", "--workspace"' in noxfile
+    assert "--profraw-only" not in noxfile
