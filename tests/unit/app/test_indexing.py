@@ -329,7 +329,7 @@ def test_merges_too_large_for_a_write_run_as_their_own_phase(home: Path, notes: 
     limits = Limits(most_files_a_write=1, batches=batches)
     index(home, IndexCollections(), said.append, limits)
     assert [event.phase for event in said if isinstance(event, PhaseStarted)] == [Phase.SCAN, Phase.READ, Phase.MERGE]
-    assert [event for event in said if isinstance(event, PhaseDone)][-1] == PhaseDone(8)
+    assert [event for event in said if isinstance(event, PhaseDone)][-1] == PhaseDone(4)
     assert isinstance(said[-1], Finished)
     again: list[Event] = []
     index(home, IndexCollections(), again.append, limits)

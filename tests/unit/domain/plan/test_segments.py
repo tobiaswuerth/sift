@@ -6,7 +6,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.plan.segments import FEWEST_JOINED, POLICY, Held, Policy, merges
+from sift.domain.plan.segments import FEWEST_JOINED, POLICY, Held, Policy, backlog_merges, merges
 
 SMALL = Policy(factor=3, floor=10, most=500)
 
@@ -32,25 +32,33 @@ def merged(segments: list[Held], runs: tuple[range, ...]) -> list[Held]:
     return out
 
 
-def settled(segments: list[Held], policy: Policy) -> tuple[list[Held], int, int]:
+type Planned = Callable[[list[Held], Policy], tuple[range, ...]]
+
+
+def settled(segments: list[Held], policy: Policy, planned: Planned = merges) -> tuple[list[Held], int, int]:
     written = rounds = 0
-    while runs := merges(segments, policy):
+    while runs := planned(segments, policy):
         written += sum(segments[i].chunks - segments[i].dead for run in runs for i in run)
         segments = merged(segments, runs)
         rounds += 1
     return segments, written, rounds
 
 
-@given(st.lists(held, max_size=60), st.sampled_from([SMALL, POLICY]))
-def test_merges_are_disjoint_runs_of_neighbours_none_larger_than_the_most(segments: list[Held], policy: Policy) -> None:
-    runs = merges(segments, policy)
+@given(
+    st.lists(held, max_size=60), st.sampled_from([SMALL, POLICY]), st.sampled_from([(merges, 1), (backlog_merges, 2)])
+)
+def test_merges_are_disjoint_runs_of_neighbours_none_larger_than_the_most(
+    segments: list[Held], policy: Policy, planned: tuple[Planned, int]
+) -> None:
+    plan, power = planned
+    runs = plan(segments, policy)
     covered = [i for run in runs for i in run]
     assert len(covered) == len(set(covered))
     assert all(0 <= run.start < run.stop <= len(segments) for run in runs)
     assert [run.start for run in runs] == sorted(run.start for run in runs)
     for run in runs:
         live = sum(segments[i].chunks - segments[i].dead for i in run)
-        assert len(run) == 1 or (FEWEST_JOINED <= len(run) <= policy.factor and live <= policy.most)
+        assert len(run) == 1 or (FEWEST_JOINED <= len(run) <= policy.factor**power and live <= policy.most)
 
 
 @given(st.lists(held, max_size=60))
@@ -79,6 +87,18 @@ def test_fewer_neighbours_of_a_level_than_the_factor_stay_and_as_many_merge() ->
     assert merges([Held(50_000, 0), *[Held(5, 0)] * 10]) == (range(1, 11),)
     assert merges([Held(500, 0)] * 10, Policy(floor=10, most=4_000)) == (range(8),)
     assert merges([Held(3_000, 0)] * 10, Policy(floor=10, most=4_000)) == ()
+
+
+def test_small_segments_that_wait_together_are_merged_once_into_segments_as_large_as_a_merge_writes() -> None:
+    waiting = [Held(20_000, 0)] * 1_500
+    segments, written, rounds = settled(waiting, POLICY, backlog_merges)
+    assert (written, rounds) == (1_500 * 20_000, 1)
+    assert segments == [Held(POLICY.most, 0)] * 15
+    assert settled(waiting, POLICY)[1:] == (2 * 1_500 * 20_000, 2)
+    assert backlog_merges([Held(5, 0)] * 250) == (range(100), range(100, 200), range(200, 250))
+    assert merges([Held(5, 0)] * 25) == (range(10), range(10, 20))
+    assert backlog_merges([Held(5, 0)] * 9) == ()
+    assert settled([Held(2_000, 0)] * 1_000, POLICY, backlog_merges)[1:] == (2 * 1_000 * 2_000, 2)
 
 
 def test_segments_appended_far_beyond_the_most_a_merge_writes_settle_near_it() -> None:

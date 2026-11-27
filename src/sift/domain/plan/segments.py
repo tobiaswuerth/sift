@@ -47,7 +47,7 @@ def _fitting(live: Sequence[int], window: range, most: int) -> range | None:
     return range(window.start, stop) if stop - window.start >= FEWEST_JOINED else None
 
 
-def _by_level(live: Sequence[int], policy: Policy) -> list[range]:
+def _by_level(live: Sequence[int], policy: Policy, widest: int) -> list[range]:
     levels = [_level(n, policy) for n in live]
     found: list[range] = []
     start = 0
@@ -55,7 +55,7 @@ def _by_level(live: Sequence[int], policy: Policy) -> list[range]:
         bottom = max(max(levels[start:]) - policy.span, _level(policy.floor, policy))
         upto = max(at for at in range(start, len(live)) if levels[at] >= bottom)
         while start + policy.factor <= upto + 1:
-            run = _fitting(live, range(start, start + policy.factor), policy.most)
+            run = _fitting(live, range(start, min(upto + 1, start + widest)), policy.most)
             if run is None:
                 start += 1
             else:
@@ -66,7 +66,15 @@ def _by_level(live: Sequence[int], policy: Policy) -> list[range]:
 
 
 def merges(held: Sequence[Held], policy: Policy = POLICY) -> tuple[range, ...]:
-    found = _by_level([each.chunks - each.dead for each in held], policy)
+    return _planned(held, policy, policy.factor)
+
+
+def backlog_merges(held: Sequence[Held], policy: Policy = POLICY) -> tuple[range, ...]:
+    return _planned(held, policy, policy.factor**2)
+
+
+def _planned(held: Sequence[Held], policy: Policy, widest: int) -> tuple[range, ...]:
+    found = _by_level([each.chunks - each.dead for each in held], policy, widest)
     covered = {at for run in found for at in run}
     rewritten = [
         range(at, at + 1)

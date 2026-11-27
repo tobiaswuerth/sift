@@ -21,7 +21,7 @@ from sift.app.filing import LIMITS, Limits, Lines, Readers
 from sift.app.indexing import index
 from sift.app.records import DESCRIBED_WITHIN
 from sift.app.search import search
-from sift.domain.plan.segments import POLICY, Held, merges
+from sift.domain.plan.segments import POLICY, Held, backlog_merges, merges
 from sift.domain.text.documents import Outcome
 from sift.domain.text.notes import Document
 from sift.domain.text.records import GIVE_IDS, NO_CHOICE, SkippedLine, record_of
@@ -315,16 +315,17 @@ def test_small_files_of_records_are_stored_together_in_one_keyword_segment(tmp_p
     assert found(home, "part") == sorted(f"c/r{n:02}.jsonl#{n}-{m}" for n in range(30) for m in range(3))[:20]
 
 
-def test_the_passages_of_a_large_file_of_records_are_merged_twice_at_most_on_their_way_to_a_full_segment() -> None:
-    held: list[Held] = []
+def test_the_passages_of_a_large_file_of_records_are_merged_once_on_their_way_to_a_full_segment() -> None:
+    held = [Held(LIMITS.most_records_a_write, 0)] * (POLICY.most // LIMITS.most_records_a_write)
+    assert LIMITS.batches.merging == POLICY
+    assert merges(held[: POLICY.factor], POLICY) == (range(POLICY.factor),)
+    assert POLICY.factor * LIMITS.most_records_a_write > LIMITS.batches.chunks_a_settle
     rewritten = 0
-    for _ in range(POLICY.most // LIMITS.most_records_a_write):
-        held.append(Held(LIMITS.most_records_a_write, 0))
-        while planned := merges(held, POLICY):
-            joined = sum(each.chunks for each in held[planned[0].start : planned[0].stop])
-            rewritten += joined
-            held[planned[0].start : planned[0].stop] = [Held(joined, 0)]
-    assert ([each.chunks for each in held], rewritten) == ([POLICY.most], 2 * POLICY.most)
+    while planned := backlog_merges(held, POLICY):
+        joined = sum(each.chunks for each in held[planned[0].start : planned[0].stop])
+        rewritten += joined
+        held[planned[0].start : planned[0].stop] = [Held(joined, 0)]
+    assert ([each.chunks for each in held], rewritten) == ([POLICY.most], POLICY.most)
 
 
 type Json = bool | int | float | str | list[Json] | dict[str, Json] | None

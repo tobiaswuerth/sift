@@ -1,7 +1,7 @@
 import heapq
 import itertools
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -24,7 +24,7 @@ from sift.domain.codec.segments import (
 )
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
-from sift.domain.plan.segments import Held, Policy, merges
+from sift.domain.plan.segments import Held, Policy, backlog_merges, merges
 from sift.storage.database import Batches, IdRow, Reading, WritingDocuments, rows, run, streamed
 from sift.storage.keyword_meta import Side
 from sift.storage.keyword_writes import (
@@ -339,17 +339,20 @@ def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shap
         run(transaction, sql, (named,))
 
 
-def _plan(transaction: Reading, policy: Policy, side: Side) -> list[list[PlacedSegment]]:
+type Plan = Callable[[Sequence[Held], Policy], tuple[range, ...]]
+
+
+def _plan(transaction: Reading, policy: Policy, side: Side, plan: Plan) -> list[list[PlacedSegment]]:
     held = rows(transaction, PlacedSegment, PLANNED[side])
-    return [[held[at] for at in each] for each in merges([Held(each.chunks, each.dead) for each in held], policy)]
+    return [[held[at] for at in each] for each in plan([Held(each.chunks, each.dead) for each in held], policy)]
 
 
 def _planned(transaction: WritingDocuments, side: Side) -> list[list[PlacedSegment]]:
-    return _plan(transaction, transaction.batches.merging, side)
+    return _plan(transaction, transaction.batches.merging, side, merges)
 
 
 def planned(transaction: Reading, policy: Policy) -> bool:
-    return bool(_plan(transaction, policy, Side.SERVED))
+    return bool(_plan(transaction, policy, Side.SERVED, backlog_merges))
 
 
 def _live(merged: Sequence[PlacedSegment]) -> int:
@@ -366,7 +369,7 @@ def settled(transaction: WritingDocuments, shape: Shape, side: Side = Side.SERVE
 
 
 def merged_once(transaction: WritingDocuments, shape: Shape) -> int:
-    chosen = _planned(transaction, Side.SERVED)
+    chosen = _plan(transaction, transaction.batches.merging, Side.SERVED, backlog_merges)
     if not chosen:
         return 0
     _merged(transaction, chosen[0], shape, Side.SERVED)

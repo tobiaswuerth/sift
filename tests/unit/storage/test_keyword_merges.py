@@ -217,13 +217,13 @@ def test_a_term_only_dead_chunks_held_is_gone_after_a_merge(postings: int) -> No
 def test_merges_too_large_for_a_write_wait_for_settling_a_merge_a_transaction() -> None:
     batches = Batches(chunks_a_settle=1, merging=Policy(factor=2, floor=1, span=0.0))
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
-        for n in range(4):
+        for n in range(8):
             applied(connection, [{f"n{n}.md": ("", f"Note {n}", "one two")}], batches)
         with reading(connection) as transaction:
             held = rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments ORDER BY first")
-        assert len(held) == 4
-        assert list(settle(connection, batches)) == [0, 2, 4, 8]
-        assert settled(connection, batches.merging) == [Sized(4, 0)]
+        assert len(held) == 8
+        assert list(settle(connection, batches)) == [0, 4, 8, 16]
+        assert settled(connection, batches.merging) == [Sized(8, 0)]
         checked(connection)
 
 
