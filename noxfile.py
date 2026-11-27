@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -20,6 +21,11 @@ CRATE_COVERAGE = "native/target/coverage"
 LLVM_COV = "0.9.2"
 CRATE_REACHED_BY = ("tests/unit/domain/codec", "tests/unit/storage", "tests/unit/retrieval/keyword")
 CRATE_TESTS = r"src[/\\]tests"
+BINDING = Path("native/src/python")
+NO_BINDING = (
+    "the coverage report holds nothing of {missing}: the instrumented extension was not found, so its lines "
+    "were not counted. Look where maturin put it and where cargo llvm-cov looks."
+)
 TWINE = "twine@7.0.0"
 MOST_WORKERS = 8
 WORKERS = str(min(MOST_WORKERS, os.cpu_count() or 1))
@@ -129,18 +135,13 @@ def kernel(session: nox.Session) -> None:
     (wheel,) = map(str, dist.glob("*.whl"))
     session.run("uv", "pip", "install", "--reinstall", "--no-deps", wheel, external=True)
     session.run("pytest", "-q", "-n", WORKERS, *CRATE_REACHED_BY, env=env)
-    session.run(
-        "cargo",
-        "llvm-cov",
-        "report",
-        f"--manifest-path={CRATE}",
-        "--release",
-        "--fail-under-lines=100",
-        f"--ignore-filename-regex={CRATE_TESTS}",
-        "--show-missing-lines",
-        external=True,
-        env=env,
-    )
+    report = ("cargo", "llvm-cov", "report", f"--manifest-path={CRATE}", "--release")
+    checked = ("--fail-under-lines=100", f"--ignore-filename-regex={CRATE_TESTS}", "--show-missing-lines")
+    told = said(session, *report, *checked, env=env)
+    session.log(told)
+    bound = [Path("python.rs"), *sorted(Path("python", each.name) for each in BINDING.glob("*.rs"))]
+    if missing := [str(each) for each in bound if not re.search(rf"^{re.escape(str(each))}\s", told, re.MULTILINE)]:
+        session.error(NO_BINDING.format(missing=", ".join(missing)))
 
 
 @nox.session(python=OLDEST)
