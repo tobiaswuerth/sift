@@ -4,8 +4,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from sift.domain.arrays import Ids, ints
-from sift.domain.codec.codes import Bits, Distances, Words, words
+from sift import _native
+from sift.domain.arrays import Ids, integers, ints, whole
+from sift.domain.codec.codes import Bits, Words, width_of, words
 
 if TYPE_CHECKING:
     from numpy.random import Generator
@@ -13,46 +14,32 @@ if TYPE_CHECKING:
 LEVELS = (64, 64)
 ROUNDS = 8
 PER_CLUSTER = 300
-STEP = 65_536
 SEED = 0
+STORED_WORDS = np.dtype("<u8")
 
 
 @dataclass(eq=False, frozen=True, slots=True)
 class _Clustering:
     held: Words
     rng: "Generator"
-    step: int
 
 
-def _nearest(held: Words, centroids: Words, step: int) -> Ids:
-    found = np.empty(len(held), np.int64)
-    for start in range(0, len(held), step):
-        rows = held[start : start + step]
-        apart: Distances = np.empty((len(rows), len(centroids)), np.uint16)
-        for at in range(len(centroids)):
-            apart[:, at] = np.bitwise_count(rows ^ centroids[at : at + 1]).sum(axis=1, dtype=np.uint16)
-        found[start : start + len(rows)] = apart.argmin(axis=1)
-    return found
+def nearest(held: Words, centroids: Words) -> Ids:
+    return integers(_native.nearest_centroids(held, centroids, width_of(centroids)))
 
 
-def _majority(held: Words, assigned: Ids, centroids: Words) -> Words:
-    order = np.argsort(assigned, kind="stable")
-    clusters, starts = np.unique(assigned[order], return_index=True)
-    bits = np.unpackbits(held[order].view(np.uint8), axis=1)
-    ones = np.add.reduceat(bits, starts, axis=0, dtype=np.uint32)
-    sizes = np.diff(np.append(starts, len(order)))[:, None]
-    made = centroids.copy()
-    made[clusters] = np.packbits(ones * 2 > sizes, axis=1).view(np.uint64)
-    return made
+def majority(held: Words, assigned: Ids, centroids: Words) -> Words:
+    made = _native.majority_centroids(held, whole(assigned), centroids, width_of(centroids))
+    return np.frombuffer(made, STORED_WORDS).astype(np.uint64).reshape(centroids.shape)
 
 
 def _means(clustering: _Clustering, held: Words, k: int) -> tuple[Words, Ids]:
-    rng, step, size = clustering.rng, clustering.step, PER_CLUSTER * k
+    rng, size = clustering.rng, PER_CLUSTER * k
     sample = held[rng.choice(len(held), size, replace=False)] if len(held) > size else held
     centroids = sample[rng.choice(len(sample), min(k, len(sample)), replace=False)].copy()
     for _ in range(ROUNDS):
-        centroids = _majority(sample, _nearest(sample, centroids, step), centroids)
-    return centroids, _nearest(held, centroids, step)
+        centroids = majority(sample, nearest(sample, centroids), centroids)
+    return centroids, nearest(held, centroids)
 
 
 def _chain(centroids: Words) -> Ids:
@@ -81,10 +68,10 @@ def _leaves(clustering: _Clustering, rows: Ids, level: int, prefix: int) -> Iter
             yield mine, code * below
 
 
-def topical(ids: Ids, bits: Bits, step: int = STEP) -> Ids:
+def topical(ids: Ids, bits: Bits) -> Ids:
     leaf = np.zeros(len(ids), np.int64)
     if len(ids) > 1:
-        clustering = _Clustering(words(bits), np.random.default_rng(SEED), step)
+        clustering = _Clustering(words(bits), np.random.default_rng(SEED))
         for rows, code in _leaves(clustering, np.arange(len(ids)), 0, 0):
             leaf[rows] = code
     return ids[np.lexsort((ids, leaf))]

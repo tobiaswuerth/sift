@@ -8,7 +8,20 @@ CRATE = "native/src"
 ROOT_MODULE = "lib"
 TESTS = "tests"
 MOST_LINES = 400
-LAYERS = ("numbers", "packed", "lists", "packs", "words", "postings", "segment", "merge", "phrases", "unions", "python")
+LAYERS = (
+    "numbers",
+    "packed",
+    "lists",
+    "packs",
+    "words",
+    "postings",
+    "segment",
+    "merge",
+    "phrases",
+    "unions",
+    "clusters",
+    "python",
+)
 NAMED = re.compile(r"^[ \t]*(?:pub(?:\([a-z]+\))? )?(?:struct|enum|trait|type) (\w+)", re.MULTILINE)
 USED = re.compile(r"\bcrate::(\w+)")
 TEXT = re.compile(r'b?"(?:[^"\\]|\\.)*"|b?r(#*)".*?"\1|b?\'(?:[^\'\\]|\\(?:[^u]|u\{[0-9a-fA-F]+\}))\'', re.DOTALL)

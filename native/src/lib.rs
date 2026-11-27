@@ -1,3 +1,4 @@
+mod clusters;
 mod lists;
 mod merge;
 mod numbers;
