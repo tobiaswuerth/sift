@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 
 from sift import _native
 from sift.domain.arrays import STORED_I64, STORED_U32, Ids, after, whole
+from sift.domain.codec.shape import Shape, shaped
 from sift.domain.errors import DamagedError
 
 type Bytes = NDArray[np.uint8]
@@ -47,12 +48,7 @@ def _inflated(data: bytes) -> bytes:
 
 
 def _numbers(stored: bytes) -> Ids:
-    return np.frombuffer(stored, STORED_I64).astype(np.int64)
-
-
-def blocked(data: bytes) -> tuple[Ids, Ids]:
-    places, counts, _ = blocked_all([data])
-    return places, counts
+    return np.frombuffer(stored, STORED_I64).astype(np.int64, copy=False)
 
 
 def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
@@ -61,6 +57,16 @@ def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
     except ValueError as error:
         raise DamagedError(str(error)) from None
     return _numbers(ids), _numbers(counts), bounds
+
+
+def blocked_within(
+    each: Sequence[bytes], numbers: Sequence[int], ranges: Ranges, shape: Shape
+) -> list[tuple[Ids, Ids]]:
+    try:
+        found = _native.blocked_within(each, numbers, whole(ranges.ids), whole(ranges.ends), shaped(shape))
+    except ValueError as error:
+        raise DamagedError(str(error)) from None
+    return [(_numbers(places), _numbers(counts)) for places, counts in found]
 
 
 def occurrences(

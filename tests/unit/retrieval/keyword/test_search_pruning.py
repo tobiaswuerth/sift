@@ -113,6 +113,16 @@ def test_the_blocks_of_a_list_that_a_batch_of_ranges_needs_are_read_by_one_state
         assert statements <= batches
 
 
+def test_the_blocks_a_statement_reads_are_unpacked_by_one_call_not_one_each() -> None:
+    notes: Round = {f"n{n:04}.md": ("", "N", f"w1 x{n}") for n in range(600)}
+    with collections([[notes]]) as (stores, held):
+        (store,) = stores
+        asked = [(keyword_lists_module, "blocks"), (postings_module, "blocked_within")]
+        statements, unpacked = calls_finding_half(stores, held, asked)
+        assert len(blocks_read(store)) > 10 * statements
+        assert unpacked == statements
+
+
 def test_the_lengths_a_search_reads_are_unpacked_by_one_call_a_read_not_one_for_each_block() -> None:
     notes: Round = {f"n{n:04}.md": ("", "N", f"w1 x{n}") for n in range(600)}
     with collections([[notes]]) as (stores, held):

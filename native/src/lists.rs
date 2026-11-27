@@ -51,7 +51,7 @@ pub struct Occurring {
 
 pub type Coded = (Vec<u8>, Vec<u8>);
 
-fn each_of<T, R, F>(rows: &[R], one: F) -> Result<Vec<T>, String>
+pub fn each_of<T, R, F>(rows: &[R], one: F) -> Result<Vec<T>, String>
 where
     T: Send,
     R: AsRef<[u8]> + Sync,

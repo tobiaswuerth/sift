@@ -9,8 +9,8 @@ from numpy.typing import NDArray
 from sift.domain.arrays import Ascending, Ids, after, among, distinct, first, ints, last, read_only, run_starts, total
 from sift.domain.codec.postings import (
     Ranges,
-    blocked,
     blocked_all,
+    blocked_within,
     lengths_all,
     occurrences,
     ranges_of,
@@ -160,18 +160,6 @@ def _one[T](found: list[T], what: str) -> T:
     return found[0]
 
 
-def _decoded(store: Opened, held: Ranged, number: int, postings: bytes) -> PostingArrays:
-    places, counts = blocked(postings)
-    size = min(store.shape.block, last(held.ranges.ends) - number * store.shape.block)
-    if len(places) != size:
-        raise DamagedError(f"a block holds {len(places):,} postings where its ranges place {size:,}")
-    start = number * store.shape.block
-    owners = np.searchsorted(held.ranges.ends, np.arange(start, start + size), side="right")
-    if not bool(np.array_equal(places >> store.shape.range_shift, held.ranges.ids[owners])):
-        raise DamagedError("a block holds postings outside its ranges")
-    return read_only(places), read_only(counts)
-
-
 def _blocks(store: Opened, held: Ranged, numbers: Sequence[int]) -> dict[int, PostingArrays]:
     found: dict[int, PostingArrays] = {}
     missing: list[int] = []
@@ -181,12 +169,15 @@ def _blocks(store: Opened, held: Ranged, numbers: Sequence[int]) -> dict[int, Po
             missing.append(number)
         else:
             found[number] = kept
-    read = keyword_lists.blocks(store.transaction, held.segment, held.term, missing) if missing else []
+    if not missing:
+        return found
+    read = keyword_lists.blocks(store.transaction, held.segment, held.term, missing)
     if [row.number for row in read] != missing:
         raise DamagedError("a block of postings is missing from the keyword index")
-    for row in read:
-        found[row.number] = _decoded(store, held, row.number, row.postings)
-        store.decoded.blocks[held.segment, held.term, row.number] = found[row.number]
+    decoded = blocked_within([row.postings for row in read], missing, held.ranges, store.shape)
+    for number, (places, counts) in zip(missing, decoded, strict=True):
+        found[number] = (read_only(places), read_only(counts))
+        store.decoded.blocks[held.segment, held.term, number] = found[number]
     return found
 
 

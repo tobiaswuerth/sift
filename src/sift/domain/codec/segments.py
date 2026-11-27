@@ -7,7 +7,7 @@ import numpy as np
 
 from sift import _native
 from sift.domain.arrays import STORED_U32, Ids, whole
-from sift.domain.codec.shape import SHAPE, Shape
+from sift.domain.codec.shape import SHAPE, Shape, shaped
 from sift.domain.errors import DamagedError
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, TRANSLATION
 
@@ -63,10 +63,6 @@ def building(most_tokens: int) -> Building:
     return _words().building(most_tokens, MOST_FIELD_CHARACTERS)
 
 
-def _shaped(shape: Shape) -> tuple[int, int, int, int]:
-    return shape.range_shift, shape.block, shape.long, shape.lengths_shift
-
-
 @dataclass(eq=False, frozen=True, slots=True)
 class MergedChunks:
     live: Ids
@@ -92,7 +88,7 @@ class MergeStep:
 def merger(chunks: MergedChunks, shape: Shape, limits: MergeLimits, sources: int) -> Merger:
     live, lengths, dead = whole(chunks.live), whole(chunks.lengths), whole(chunks.dead)
     most = (limits.postings, limits.stored, limits.tokens)
-    return _native.Merger(live, lengths, dead, chunks.average, _shaped(shape), most, sources)
+    return _native.Merger(live, lengths, dead, chunks.average, shaped(shape), most, sources)
 
 
 def fed(held: Merger, source: int, rows: Sequence[tuple[object, ...]]) -> bool:
@@ -154,5 +150,5 @@ def gathered(built: Building) -> Collected:
 
 def written(built: Building, segment: int, average: float, shape: Shape = SHAPE) -> WrittenSegment:
     held = gathered(built)
-    found, lengths = built.written(segment, average, _shaped(shape))
+    found, lengths = built.written(segment, average, shaped(shape))
     return WrittenSegment(held.first, held.last, held.chunks, held.tokens, average, FiledLists(*found), lengths)

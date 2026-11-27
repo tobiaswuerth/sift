@@ -1,5 +1,5 @@
-use crate::lists::block;
-use crate::postings::{Kept, Postings, Shape, blocks_of, gathered, joined, ranged};
+use crate::lists::{Lists, block, list};
+use crate::postings::{Kept, Owning, Postings, Shape, blocks_of, gathered, joined, owned_blocks, ranged};
 use crate::tests::support::{AVERAGE, refused, small};
 
 fn of(places: &[i64]) -> Result<Postings, String> {
@@ -74,5 +74,70 @@ fn ranges_too_far_apart_too_full_or_of_no_posting_are_refused() -> Result<(), St
     let (mut found, full) = (Vec::new(), of(&(0..257).collect::<Vec<i64>>())?);
     full.ranged(&mut found, AVERAGE, 9);
     assert!(refused(ranged(&found), "more postings than its count keeps"));
+    Ok(())
+}
+
+fn coded(ids: &[i64]) -> Result<Vec<u8>, String> {
+    let lists = Lists {
+        ids,
+        counts: &vec![1; ids.len()],
+        positions: &vec![0; ids.len()],
+        offsets: &(0..=ids.len()).collect::<Vec<usize>>(),
+    };
+    Ok(list(&lists, 0, ids.len())?.0)
+}
+
+fn owning(numbers: &[usize]) -> Owning<'_> {
+    Owning {
+        numbers,
+        ids: &[0, 1, 2],
+        ends: &[2, 3, 5],
+    }
+}
+
+#[test]
+fn the_blocks_of_a_list_are_read_together_and_one_outside_its_ranges_or_of_another_size_is_refused()
+-> Result<(), String> {
+    let rows = [coded(&[0, 1])?, coded(&[5, 9])?, coded(&[10])?];
+    let found = owned_blocks(&rows, &owning(&[0, 1, 2]), small()?)?;
+    let ids: Vec<&[i64]> = found.iter().map(|each| &each.ids[..]).collect();
+    assert_eq!(ids, [&[0, 1][..], &[5, 9][..], &[10][..]]);
+    assert_eq!(owned_blocks(&rows[2..], &owning(&[2]), small()?)?[0].counts, [1]);
+    assert!(owned_blocks(&rows[..0], &owning(&[]), small()?)?.is_empty());
+    assert!(refused(
+        owned_blocks(&rows[1..2], &owning(&[0]), small()?),
+        "outside its ranges"
+    ));
+    assert!(refused(
+        owned_blocks(&rows[..1], &owning(&[1]), small()?),
+        "outside its ranges"
+    ));
+    for (numbers, placed) in [([0], 2), ([3], 0), ([usize::MAX], 0)] {
+        let saying = format!("a block holds 1 postings where its ranges place {placed}");
+        assert!(refused(owned_blocks(&rows[2..], &owning(&numbers), small()?), &saying));
+    }
+    assert!(refused(
+        owned_blocks(&rows, &owning(&[0, 1]), small()?),
+        "a block for each number"
+    ));
+    let uneven = Owning {
+        numbers: &[0],
+        ids: &[0, 1, 2],
+        ends: &[2, 3],
+    };
+    assert!(refused(
+        owned_blocks(&rows[..1], &uneven, small()?),
+        "a block for each number"
+    ));
+    let unended = Owning {
+        numbers: &[0],
+        ids: &[],
+        ends: &[],
+    };
+    assert!(refused(owned_blocks(&rows[..1], &unended, small()?), "ranges place 0"));
+    assert!(refused(
+        owned_blocks(&[vec![9u8]], &owning(&[0]), small()?),
+        "unknown flag byte"
+    ));
     Ok(())
 }

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from sift.domain.arrays import Ids
-from sift.domain.codec.postings import PACKED, RANGES_HEAD, RAW, occurrences
+from sift.domain.codec.postings import PACKED, RANGES_HEAD, RAW, blocked_all, occurrences
 
 BLOCK_HEAD = struct.Struct("<qI")
 PACKED_FROM = 64
@@ -37,6 +37,11 @@ def placed(positions: Sequence[Sequence[int]]) -> bytes:
     return _wrapped(
         b"".join(varints([after - before for before, after in itertools.pairwise([0, *each])]) for each in positions)
     )
+
+
+def blocked(data: bytes) -> tuple[Ids, Ids]:
+    places, counts, _ = blocked_all([data])
+    return places, counts
 
 
 def positions_of(data: bytes, counts: Ids) -> Ids:

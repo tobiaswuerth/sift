@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
-use crate::lists::{Coded, Lists, list};
+use crate::lists::{Block, Coded, Lists, block, each_of, list};
 use crate::numbers::narrow;
 use crate::packed::deflated;
 use crate::packs::{Pack, Packer};
@@ -15,6 +15,8 @@ const RANGE: usize = 6;
 const MOST_RANGE_SHIFT: u32 = 8;
 const MOST_BLOCK: usize = 1 << 12;
 pub const MOST_LENGTHS_SHIFT: u32 = 20;
+const MISPLACED: &str = "a block holds postings outside its ranges";
+const UNEVEN: &str = "a list is read with a block for each number, and an end for each range";
 const FAR_APART: &str = "ranges not ascending, or more than 2**32 apart: more than ranges hold";
 const DISORDERED: &str = "the passages of a list are out of their order";
 
@@ -44,6 +46,12 @@ pub struct Row {
 }
 
 pub type Piece = (Arc<str>, usize, Coded);
+
+pub struct Owning<'a> {
+    pub numbers: &'a [usize],
+    pub ids: &'a [i64],
+    pub ends: &'a [i64],
+}
 
 pub struct Ranged {
     pub term: Box<str>,
@@ -301,4 +309,36 @@ pub fn joined(term: &str, parts: &[&Postings], average: f64, shape: Shape) -> Re
             blocks: blocks_of(parts, chunks, shape.block)?,
         },
     })
+}
+
+fn owned(row: &[u8], number: usize, owning: &Owning, shape: Shape) -> Result<Block, String> {
+    let found = block(row)?;
+    let total = owning.ends.last().copied().unwrap_or(0);
+    let start = number.checked_mul(shape.block);
+    let start = start.and_then(|start| i64::try_from(start).ok());
+    let most = i64::try_from(shape.block).unwrap_or(i64::MAX);
+    let placed = start.map_or(0, |start| total.saturating_sub(start).clamp(0, most));
+    if i64::try_from(found.ids.len()).ok() != Some(placed) {
+        let held = found.ids.len();
+        return Err(format!("a block holds {held} postings where its ranges place {placed}"));
+    }
+    let mut index = start.unwrap_or(0);
+    let mut range = owning.ends.partition_point(|&end| end <= index);
+    for &id in &found.ids {
+        while owning.ends.get(range).is_some_and(|&end| end <= index) {
+            range += 1;
+        }
+        if owning.ids.get(range) != Some(&(id >> shape.range_shift)) {
+            return Err(MISPLACED.to_owned());
+        }
+        index += 1;
+    }
+    Ok(found)
+}
+
+pub fn owned_blocks<R: AsRef<[u8]> + Sync>(rows: &[R], owning: &Owning, shape: Shape) -> Result<Vec<Block>, String> {
+    if owning.numbers.len() != rows.len() || owning.ids.len() != owning.ends.len() {
+        return Err(UNEVEN.to_owned());
+    }
+    each_of(rows, |at, row| owned(row, owning.numbers[at], owning, shape))
 }

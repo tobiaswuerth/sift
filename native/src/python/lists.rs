@@ -6,11 +6,13 @@ use pyo3::types::{PyBytes, PyList, PyString};
 use crate::lists::{Sought, blocks, occurring};
 use crate::numbers::little_endian;
 use crate::packs::{self, Entry, entries};
-use crate::python::{lengths_of, numbers_of};
+use crate::postings::{Owning, owned_blocks};
+use crate::python::{lengths_of, numbers_of, shaped};
 use crate::segment::{lengths_read, lengths_written};
 
 type Blocked<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Vec<usize>);
 type Counted<'py> = Vec<(Bound<'py, PyString>, usize)>;
+type Owned<'py> = Vec<(Bound<'py, PyBytes>, Bound<'py, PyBytes>)>;
 type Occurrences<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Bound<'py, PyBytes>);
 type Unpacked<'py> = (
     Bound<'py, PyString>,
@@ -25,6 +27,34 @@ pub fn blocked_all<'py>(each: &Bound<'py, PyAny>) -> PyResult<Blocked<'py>> {
     let found = py.detach(|| blocks(&rows)).map_err(PyValueError::new_err)?;
     let (ids, counts) = (little_endian(&found.ids), little_endian(&found.counts));
     Ok((PyBytes::new(py, &ids), PyBytes::new(py, &counts), found.bounds))
+}
+
+#[pyfunction]
+pub fn blocked_within<'py>(
+    each: &Bound<'py, PyAny>,
+    numbers: &Bound<'py, PyAny>,
+    ids: &Bound<'py, PyAny>,
+    ends: &Bound<'py, PyAny>,
+    shape: (u32, usize, usize, u32),
+) -> PyResult<Owned<'py>> {
+    let (py, rows, numbers) = (
+        each.py(),
+        each.extract::<Vec<PyBackedBytes>>()?,
+        numbers.extract::<Vec<usize>>()?,
+    );
+    let (ids, ends, shape) = (numbers_of(ids)?, numbers_of(ends)?, shaped(shape)?);
+    let owning = Owning {
+        numbers: &numbers,
+        ids: &ids,
+        ends: &ends,
+    };
+    let found = py.detach(|| owned_blocks(&rows, &owning, shape));
+    let stored = |numbers: &[i64]| PyBytes::new(py, &little_endian(numbers));
+    let told = found.map_err(PyValueError::new_err)?;
+    Ok(told
+        .iter()
+        .map(|each| (stored(&each.ids), stored(&each.counts)))
+        .collect())
 }
 
 #[pyfunction]

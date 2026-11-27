@@ -14,8 +14,8 @@ from sift.domain.codec.postings import (
     PACKED,
     RANGES_HEAD,
     RAW,
-    blocked,
     blocked_all,
+    blocked_within,
     lengths_all,
     occurrences,
     ranges_of,
@@ -23,7 +23,7 @@ from sift.domain.codec.postings import (
 )
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
-from tests.coded_lists import BLOCK_HEAD, block, placed, positions_of, ranges, varint, varints
+from tests.coded_lists import BLOCK_HEAD, block, blocked, placed, positions_of, ranges, varint, varints
 from tests.unit.domain.codec.built import SMALL, of_bodies, segment, short_lists
 
 
@@ -258,6 +258,23 @@ def test_the_positions_of_the_passages_wanted_come_back_from_many_blocks_as_each
     assert [len(each) for each in nothing] == [0, 0, 0]
     with pytest.raises(DamagedError, match="told other than block by block"):
         occurrences(rows[:2], bounds[:2], (places[:30], counts[:30]), wanted)
+
+
+def test_the_blocks_of_a_list_come_back_each_alone_and_one_its_ranges_do_not_place_is_refused() -> None:
+    shape = Shape(range_shift=2, block=2, long=3, lengths_shift=3)
+    held = ranges_of(ranges([0, 1, 2], [2, 1, 2], [9, 9, 9]))
+    rows = [block([0, 1], [1, 3]), block([5, 9], [2, 1]), block([10], [4])]
+    found = blocked_within(rows, [0, 1, 2], held, shape)
+    assert [(ints(places), ints(counts)) for places, counts in found] == [
+        ([0, 1], [1, 3]),
+        ([5, 9], [2, 1]),
+        ([10], [4]),
+    ]
+    assert blocked_within([], [], held, shape) == []
+    with pytest.raises(DamagedError, match="a block holds postings outside its ranges"):
+        blocked_within(rows[1:2], [0], held, shape)
+    with pytest.raises(DamagedError, match="a block holds 1 postings where its ranges place 2"):
+        blocked_within(rows[2:], [1], held, shape)
 
 
 def test_numbers_are_kept_little_endian_on_every_machine() -> None:

@@ -28,4 +28,8 @@ class Shape:
             )
 
 
+def shaped(shape: Shape) -> tuple[int, int, int, int]:
+    return shape.range_shift, shape.block, shape.long, shape.lengths_shift
+
+
 SHAPE = Shape()

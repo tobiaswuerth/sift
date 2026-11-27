@@ -2,6 +2,7 @@ import tempfile
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -41,8 +42,10 @@ def reads(said: list[str]) -> dict[str, int]:
 
 
 def alone(array: NDArray[np.generic]) -> bool:
-    base = array.base
-    return base is None or (base.base is None and base.nbytes == array.nbytes)
+    holder: NDArray[np.generic] | bytes = array
+    while isinstance(holder, np.ndarray) and holder.base is not None:
+        holder = cast("NDArray[np.generic] | bytes", holder.base)
+    return memoryview(holder).nbytes == array.nbytes
 
 
 def test_a_search_given_what_was_decoded_before_reads_no_lengths_or_blocks_again() -> None:
