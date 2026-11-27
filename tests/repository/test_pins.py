@@ -46,3 +46,24 @@ def test_no_hook_installs_a_dependency_of_no_fixed_version() -> None:
         for each in listed.split(",")
     ]
     assert [each for each in added if "==" not in each] == []
+
+
+def test_every_tool_a_workflow_installs_with_cargo_is_locked_at_a_version() -> None:
+    installed = [
+        (path.name, line.strip())
+        for path in WORKFLOWS
+        for line in path.read_text(encoding="utf-8").split("\n")
+        if "cargo install" in line
+    ]
+    pinned = r"- run: cargo install [\w-]+ --locked --version [0-9]+\.[0-9]+\.[0-9]+"
+    assert [each for each in installed if re.fullmatch(pinned, each[1]) is None] == []
+    assert [name for name, _ in installed] == ["audit.yml"]
+
+
+def test_the_crates_of_the_extension_are_audited_and_updated_as_the_packages_are() -> None:
+    audit = (ROOT / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    assert "- run: cargo audit --file native/Cargo.lock --deny warnings\n" in audit
+    updates = (ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    assert "  - package-ecosystem: cargo" in updates
+    assert "    directory: /native\n" in updates
+    assert updates.count("default-days: 7") == updates.count("package-ecosystem:")
