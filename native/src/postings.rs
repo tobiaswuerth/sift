@@ -322,16 +322,15 @@ fn owned(row: &[u8], number: usize, owning: &Owning, shape: Shape) -> Result<Blo
         let held = found.ids.len();
         return Err(format!("a block holds {held} postings where its ranges place {placed}"));
     }
-    let mut index = start.unwrap_or(0);
-    let mut range = owning.ends.partition_point(|&end| end <= index);
-    for &id in &found.ids {
+    let start = start.unwrap_or(0);
+    let mut range = owning.ends.partition_point(|&end| end <= start);
+    for (index, &id) in (start..).zip(&found.ids) {
         while owning.ends.get(range).is_some_and(|&end| end <= index) {
             range += 1;
         }
         if owning.ids.get(range) != Some(&(id >> shape.range_shift)) {
             return Err(MISPLACED.to_owned());
         }
-        index += 1;
     }
     Ok(found)
 }

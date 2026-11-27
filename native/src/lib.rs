@@ -3,6 +3,7 @@ mod merge;
 mod numbers;
 mod packed;
 mod packs;
+mod phrases;
 mod postings;
 #[cfg(feature = "python")]
 mod python;

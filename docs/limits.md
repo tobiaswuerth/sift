@@ -48,7 +48,6 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.domain.rank.bm25` | `LEAST_IDF` | `1e-6` |
 | `sift.domain.rank.hybrid` | `FEWEST_TO_CUT` | `3` |
 | `sift.domain.rank.measures` | `MOST_GRADE` | `10` |
-| `sift.domain.rank.phrases` | `MOST_KEY` | `1 << 62` |
 | `sift.domain.rank.works` | `MOST_DOI` | `1_000` |
 | `sift.domain.text.chunks` | `MOST_CHARACTERS` | `3000` |
 | `sift.domain.text.chunks` | `MOST_OVERLAP` | `300` |

@@ -6,6 +6,7 @@ use pyo3::types::{PyBytes, PyList, PyString};
 use crate::lists::{Sought, blocks, occurring};
 use crate::numbers::little_endian;
 use crate::packs::{self, Entry, entries};
+use crate::phrases::{Word, phrased};
 use crate::postings::{Owning, owned_blocks};
 use crate::python::{lengths_of, numbers_of, shaped};
 use crate::segment::{lengths_read, lengths_written};
@@ -13,6 +14,7 @@ use crate::segment::{lengths_read, lengths_written};
 type Blocked<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Vec<usize>);
 type Counted<'py> = Vec<(Bound<'py, PyString>, usize)>;
 type Owned<'py> = Vec<(Bound<'py, PyBytes>, Bound<'py, PyBytes>)>;
+type Worded<'py> = (Bound<'py, PyAny>, Bound<'py, PyAny>, Bound<'py, PyAny>);
 type Occurrences<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Bound<'py, PyBytes>);
 type Unpacked<'py> = (
     Bound<'py, PyString>,
@@ -80,6 +82,21 @@ pub fn occurrences<'py>(
     let found = py.detach(|| occurring(&rows, &sought)).map_err(PyValueError::new_err)?;
     let stored = |numbers: &[i64]| PyBytes::new(py, &little_endian(numbers));
     Ok((stored(&found.ids), stored(&found.counts), stored(&found.positions)))
+}
+
+#[pyfunction]
+pub fn phrase_counts<'py>(candidates: &Bound<'py, PyAny>, words: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyBytes>> {
+    let (py, candidates) = (candidates.py(), numbers_of(candidates)?);
+    let mut held = Vec::new();
+    for (ids, counts, positions) in words.extract::<Vec<Worded<'py>>>()? {
+        held.push((numbers_of(&ids)?, numbers_of(&counts)?, numbers_of(&positions)?));
+    }
+    let each = held
+        .iter()
+        .map(|(ids, counts, positions)| Word { ids, counts, positions });
+    let words: Vec<Word> = each.collect();
+    let found = py.detach(|| phrased(&candidates, &words));
+    Ok(PyBytes::new(py, &little_endian(&found.map_err(PyValueError::new_err)?)))
 }
 
 fn told<'py>(py: Python<'py>, each: &Entry, placed: bool) -> Unpacked<'py> {

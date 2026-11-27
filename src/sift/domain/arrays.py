@@ -30,10 +30,6 @@ def floats(values: NDArray[np.floating]) -> list[float]:
     return cast("list[float]", values.tolist())
 
 
-def largest(values: NDArray[np.integer]) -> int:
-    return int(values.max())
-
-
 def total(values: NDArray[np.integer]) -> int:
     return int(values.sum())
 
