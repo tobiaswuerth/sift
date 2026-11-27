@@ -41,7 +41,7 @@ from sift.storage.keyword_meta import (
     fingerprint,
 )
 from sift.storage.keyword_reads import Passages, ReadParts, Span, read_ahead, read_in
-from sift.storage.keyword_writes import Head, rows_added, segment_added
+from sift.storage.keyword_writes import LENGTHS_ROW, Head, rows_added, segment_added
 
 REMAKE_REMEDY = "index the collection to remake it"
 STALE = "the store's keyword index is of another version of sift"
@@ -139,7 +139,7 @@ def segment_written(transaction: Writing, built: Building, average: float, shape
     held = gathered(built)
     made = written(built, segment_added(transaction, Head(held.first, held.last, held.chunks, average)), average, shape)
     rows_added(transaction, made.filed)
-    run_each(transaction, "INSERT INTO keyword_lengths(segment, block, lengths) VALUES (?, ?, ?)", made.lengths)
+    run_each(transaction, LENGTHS_ROW, made.lengths)
     return made
 
 

@@ -26,6 +26,7 @@ def segment_added(transaction: Writing, head: Head) -> int:
 PACK_ROW = "INSERT INTO keyword_packs(segment, first, lists, places) VALUES (?, ?, ?, ?)"
 RANGES_ROW = "INSERT INTO keyword_ranges(segment, term, chunks, ranges) VALUES (?, ?, ?, ?)"
 BLOCK_ROW = "INSERT INTO keyword_blocks(segment, term, number, postings, positions) VALUES (?, ?, ?, ?, ?)"
+LENGTHS_ROW = "INSERT INTO keyword_lengths(segment, block, lengths) VALUES (?, ?, ?)"
 
 
 def rows_added(transaction: Writing, filed: FiledLists) -> None:
@@ -35,8 +36,4 @@ def rows_added(transaction: Writing, filed: FiledLists) -> None:
 
 
 def lengths_added(transaction: Writing, segment: int, lengths: Mapping[int, bytes]) -> None:
-    run_each(
-        transaction,
-        "INSERT INTO keyword_lengths(segment, block, lengths) VALUES (?, ?, ?)",
-        [(segment, block, data) for block, data in lengths.items()],
-    )
+    run_each(transaction, LENGTHS_ROW, [(segment, block, data) for block, data in lengths.items()])
