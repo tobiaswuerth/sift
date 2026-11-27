@@ -23,7 +23,23 @@ class Building:
         self, average: float, range_shift: int, block: int, long: int, lengths_shift: int, /
     ) -> tuple[int, int, list[ListsRow], list[tuple[int, bytes]]]: ...
 
+class Merging:
+    def __new__(
+        cls,
+        live: NDArray[np.int64],
+        lengths: NDArray[np.int64],
+        dead: NDArray[np.int64],
+        average: float,
+        shape: tuple[int, int, int, int],
+        /,
+    ) -> Self: ...
+    def lists(
+        self, terms: Sequence[str], postings: Sequence[bytes], positions: Sequence[bytes], most: int, /
+    ) -> tuple[list[ListsRow], list[tuple[int, int]]]: ...
+
 def blocked_all(each: Sequence[bytes], /) -> tuple[bytes, bytes, list[int]]: ...
+def ranged(ids: NDArray[np.int64], sizes: NDArray[np.int64], best: bytes, /) -> bytes: ...
+def with_lengths(ids: NDArray[np.int64], lengths: NDArray[np.int64], shift: int, /) -> list[tuple[int, bytes]]: ...
 def positions_all(each: Sequence[bytes], counts: NDArray[np.int64], /) -> bytes: ...
 def encoded(
     ids: NDArray[np.int64], counts: NDArray[np.int64], positions: NDArray[np.int64], bounds: Sequence[int], /

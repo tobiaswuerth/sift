@@ -86,7 +86,7 @@ fn pair<'py>(py: Python<'py>, coded: &Coded) -> (Bound<'py, PyBytes>, Bound<'py,
     (PyBytes::new(py, &coded.0), PyBytes::new(py, &coded.1))
 }
 
-fn shown<'py>(py: Python<'py>, row: &Row) -> PyResult<Bound<'py, PyAny>> {
+pub fn shown<'py>(py: Python<'py>, row: &Row) -> PyResult<Bound<'py, PyAny>> {
     let term = PyString::new(py, &row.term);
     let none = py.None().into_bound(py);
     let listed = match &row.held {

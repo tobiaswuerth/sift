@@ -114,28 +114,40 @@ pub fn ranges(ids: &[i64], counts: &[i64], lengths: &[u32], average: f64, shift:
     Ok(found)
 }
 
-pub fn ranged(held: &[Range]) -> Result<Vec<u8>, String> {
-    let first = held.first().ok_or_else(|| "a long list holds no range".to_owned())?;
-    let mut body = Vec::with_capacity(12 + held.len() * 6);
-    body.extend_from_slice(&first.id.to_le_bytes());
-    body.extend_from_slice(&narrow(held.len())?.to_le_bytes());
-    for pair in held.windows(2) {
+pub fn ranges_packed(ids: &[i64], fewer: &[u8], best: &[u8]) -> Result<Vec<u8>, String> {
+    let first = ids.first().ok_or_else(|| "a long list holds no range".to_owned())?;
+    let mut body = Vec::with_capacity(12 + ids.len() * 6);
+    body.extend_from_slice(&first.to_le_bytes());
+    body.extend_from_slice(&narrow(ids.len())?.to_le_bytes());
+    for pair in ids.windows(2) {
         let gap = pair[1]
-            .id
-            .checked_sub(pair[0].id)
+            .checked_sub(pair[0])
             .filter(|&gap| gap >= 1)
             .and_then(|gap| u32::try_from(gap).ok());
         body.extend_from_slice(&gap.ok_or_else(|| FAR_APART.to_owned())?.to_le_bytes());
     }
-    for each in held {
-        let fewer = each.size.checked_sub(1).and_then(|fewer| u8::try_from(fewer).ok());
-        body.push(fewer.ok_or_else(|| "a range holds more postings than its count keeps".to_owned())?);
-    }
-    body.extend(held.iter().map(|each| quantized(each.best)));
+    body.extend_from_slice(fewer);
+    body.extend_from_slice(best);
     deflated(&body, None)
 }
 
-fn lengths_written(ids: &[i64], lengths: &[u32], shift: u32) -> Result<Vec<(i64, Vec<u8>)>, String> {
+pub fn one_fewer<S: TryInto<usize>>(size: S) -> Result<u8, String> {
+    let fewer = size
+        .try_into()
+        .ok()
+        .and_then(|size: usize| size.checked_sub(1))
+        .and_then(|fewer| u8::try_from(fewer).ok());
+    fewer.ok_or_else(|| "a range holds more postings than its count keeps, or none".to_owned())
+}
+
+pub fn ranged(held: &[Range]) -> Result<Vec<u8>, String> {
+    let ids: Vec<i64> = held.iter().map(|each| each.id).collect();
+    let fewer: Result<Vec<u8>, String> = held.iter().map(|each| one_fewer(each.size)).collect();
+    let best: Vec<u8> = held.iter().map(|each| quantized(each.best)).collect();
+    ranges_packed(&ids, &fewer?, &best)
+}
+
+pub fn lengths_written(ids: &[i64], lengths: &[u32], shift: u32) -> Result<Vec<(i64, Vec<u8>)>, String> {
     let (size, mask) = (1usize << shift, (1i64 << shift) - 1);
     let paired: Vec<(i64, u32)> = ids.iter().copied().zip(lengths.iter().copied()).collect();
     let mut found = Vec::new();
@@ -150,29 +162,40 @@ fn lengths_written(ids: &[i64], lengths: &[u32], shift: u32) -> Result<Vec<(i64,
     Ok(found)
 }
 
-fn row(
-    term: &str,
-    held: &[(u32, u32)],
-    ids: &[i64],
-    lengths: &[u32],
-    average: f64,
-    shape: Shape,
-) -> Result<Row, String> {
-    let (mut places, mut counts, mut positions) = (Vec::new(), Vec::new(), Vec::with_capacity(held.len()));
-    let (mut sizes, mut offsets) = (Vec::new(), vec![0usize]);
-    for run in held.chunk_by(|one, next| one.0 == next.0) {
-        let (owner, kept) = (at(run[0].0), run.len().min(MOST_TIMES));
-        places.push(ids[owner]);
-        sizes.push(lengths[owner]);
-        counts.push(i64::from(narrow(kept)?));
-        positions.extend(run[..kept].iter().map(|each| i64::from(each.1)));
-        offsets.push(positions.len());
+#[derive(Default)]
+pub struct Postings {
+    places: Vec<i64>,
+    counts: Vec<i64>,
+    positions: Vec<i64>,
+    offsets: Vec<usize>,
+    sizes: Vec<u32>,
+}
+
+impl Postings {
+    pub fn push<P: Iterator<Item = i64>>(&mut self, place: i64, size: u32, positions: P) -> Result<(), String> {
+        let before = self.positions.len();
+        self.positions.extend(positions);
+        self.places.push(place);
+        self.sizes.push(size);
+        self.counts.push(i64::from(narrow(self.positions.len() - before)?));
+        self.offsets.push(self.positions.len());
+        Ok(())
     }
-    let chunks = places.len();
+
+    pub fn chunks(&self) -> usize {
+        self.places.len()
+    }
+}
+
+pub fn kept(term: &str, held: &Postings, average: f64, shape: Shape) -> Result<Row, String> {
+    let chunks = held.chunks();
+    let mut offsets = Vec::with_capacity(chunks + 1);
+    offsets.push(0);
+    offsets.extend_from_slice(&held.offsets);
     let lists = Lists {
-        ids: &places,
-        counts: &counts,
-        positions: &positions,
+        ids: &held.places,
+        counts: &held.counts,
+        positions: &held.positions,
         offsets,
     };
     if chunks < shape.long {
@@ -186,7 +209,13 @@ fn row(
         .step_by(shape.block)
         .map(|start| list(&lists, start, (start + shape.block).min(chunks)))
         .collect();
-    let ranges = ranged(&ranges(&places, &counts, &sizes, average, shape.range_shift)?)?;
+    let ranges = ranged(&ranges(
+        &held.places,
+        &held.counts,
+        &held.sizes,
+        average,
+        shape.range_shift,
+    )?)?;
     Ok(Row {
         term: term.into(),
         chunks,
@@ -195,6 +224,26 @@ fn row(
             blocks: blocks?,
         },
     })
+}
+
+fn row(
+    term: &str,
+    held: &[(u32, u32)],
+    ids: &[i64],
+    lengths: &[u32],
+    average: f64,
+    shape: Shape,
+) -> Result<Row, String> {
+    let mut gathered = Postings::default();
+    for run in held.chunk_by(|one, next| one.0 == next.0) {
+        let (owner, most) = (at(run[0].0), run.len().min(MOST_TIMES));
+        gathered.push(
+            ids[owner],
+            lengths[owner],
+            run[..most].iter().map(|each| i64::from(each.1)),
+        )?;
+    }
+    kept(term, &gathered, average, shape)
 }
 
 impl Held {

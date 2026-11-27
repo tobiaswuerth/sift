@@ -7,6 +7,7 @@ use rayon::prelude::*;
 
 use crate::numbers::{little_endian, read, written};
 use crate::packed::{unwrapped, wrapped};
+use crate::segment::{lengths_written, one_fewer, ranges_packed};
 
 const HEAD: usize = 12;
 const FIRST: usize = 8;
@@ -16,9 +17,9 @@ const TOGETHER: usize = 256;
 const FAR_APART: &str = "ids not ascending, or more than 2**32 apart: more than a block holds";
 const PAST: &str = "a list holds a position past any passage";
 
-struct Block {
-    ids: Vec<i64>,
-    counts: Vec<i64>,
+pub struct Block {
+    pub ids: Vec<i64>,
+    pub counts: Vec<i64>,
 }
 
 struct Blocks {
@@ -41,7 +42,7 @@ where
     }
 }
 
-fn block(data: &[u8]) -> Result<Block, String> {
+pub fn block(data: &[u8]) -> Result<Block, String> {
     let raw = unwrapped(data)?;
     let opening = raw
         .split_first_chunk::<FIRST>()
@@ -93,19 +94,14 @@ fn blocks(rows: &[PyBackedBytes]) -> Result<Blocks, String> {
     Ok(Blocks { ids, counts, bounds })
 }
 
-fn gaps(data: &[u8]) -> Result<Vec<i64>, String> {
+pub fn gaps(data: &[u8]) -> Result<Vec<i64>, String> {
     let raw = unwrapped(data)?;
     let mut found = Vec::with_capacity(raw.len());
     read(&raw, &mut found)?;
     Ok(found)
 }
 
-fn places(rows: &[PyBackedBytes], counts: &[i64]) -> Result<Vec<i64>, String> {
-    let parts = each_of(rows, gaps)?;
-    let mut found = Vec::with_capacity(parts.iter().map(Vec::len).sum());
-    for part in &parts {
-        found.extend_from_slice(part);
-    }
+pub fn placed(found: &mut [i64], counts: &[i64]) -> Result<(), String> {
     let mut at = 0usize;
     for &count in counts {
         let end = usize::try_from(count)
@@ -128,9 +124,20 @@ fn places(rows: &[PyBackedBytes], counts: &[i64]) -> Result<Vec<i64>, String> {
         }
         at = end;
     }
-    if at != found.len() {
-        return Err("a list holds positions other than its counts".to_owned());
+    if at == found.len() {
+        Ok(())
+    } else {
+        Err("a list holds positions other than its counts".to_owned())
     }
+}
+
+fn places(rows: &[PyBackedBytes], counts: &[i64]) -> Result<Vec<i64>, String> {
+    let parts = each_of(rows, gaps)?;
+    let mut found = Vec::with_capacity(parts.iter().map(Vec::len).sum());
+    for part in &parts {
+        found.extend_from_slice(part);
+    }
+    placed(&mut found, counts)?;
     Ok(found)
 }
 
@@ -198,7 +205,7 @@ fn coded(lists: &Lists, bounds: &[usize]) -> Result<Vec<Coded>, String> {
     }
 }
 
-fn bytes_of(each: &Bound<'_, PyAny>) -> PyResult<Vec<PyBackedBytes>> {
+pub fn bytes_of(each: &Bound<'_, PyAny>) -> PyResult<Vec<PyBackedBytes>> {
     each.extract()
 }
 
@@ -246,4 +253,43 @@ pub fn encoded<'py>(
     let postings = PyList::new(py, made.iter().map(|each| PyBytes::new(py, &each.0)))?;
     let placed = PyList::new(py, made.iter().map(|each| PyBytes::new(py, &each.1)))?;
     Ok((postings, placed))
+}
+
+#[pyfunction]
+pub fn ranged<'py>(
+    ids: &Bound<'py, PyAny>,
+    sizes: &Bound<'py, PyAny>,
+    best: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let (py, ids, best) = (ids.py(), numbers_of(ids)?, best.extract::<PyBackedBytes>()?);
+    let fewer: Result<Vec<u8>, String> = numbers_of(sizes)?.into_iter().map(one_fewer).collect();
+    let fewer = fewer.map_err(PyValueError::new_err)?;
+    if ids.len() != fewer.len() || ids.len() != best.len() {
+        return Err(PyValueError::new_err("each range has an id, a size and a best score"));
+    }
+    let packed = py
+        .detach(|| ranges_packed(&ids, &fewer, &best))
+        .map_err(PyValueError::new_err)?;
+    Ok(PyBytes::new(py, &packed))
+}
+
+#[pyfunction]
+pub fn with_lengths<'py>(
+    ids: &Bound<'py, PyAny>,
+    lengths: &Bound<'py, PyAny>,
+    shift: u32,
+) -> PyResult<Bound<'py, PyList>> {
+    let (py, ids) = (ids.py(), numbers_of(ids)?);
+    let lengths: Result<Vec<u32>, _> = numbers_of(lengths)?.into_iter().map(u32::try_from).collect();
+    let lengths = lengths.map_err(|_| PyValueError::new_err("a passage is longer than its length keeps"))?;
+    if ids.len() != lengths.len() {
+        return Err(PyValueError::new_err("each chunk has a length"));
+    }
+    let found = py
+        .detach(|| lengths_written(&ids, &lengths, shift))
+        .map_err(PyValueError::new_err)?;
+    PyList::new(
+        py,
+        found.iter().map(|(block, packed)| (*block, PyBytes::new(py, packed))),
+    )
 }

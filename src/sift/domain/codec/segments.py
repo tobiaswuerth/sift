@@ -6,9 +6,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from sift import _native
-from sift.domain.arrays import STORED_U32, Ids, Scores, maxima_at, run_starts, sums_at
+from sift.domain.arrays import STORED_U32, Ids, Scores, maxima_at, run_starts, sums_at, whole
 from sift.domain.codec.postings import encoded, ranged
 from sift.domain.codec.shape import SHAPE, Shape
+from sift.domain.errors import DamagedError
 from sift.domain.rank.bm25 import quantized, term_scores
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, TRANSLATION
 
@@ -17,6 +18,7 @@ POINTS = 0x110000
 DROPPED = 0xFFFFFFFF
 
 type Building = _native.Building
+type Merging = _native.Merging
 type _Row = tuple[str, int, bytes | None, bytes | None, bytes | None, list[tuple[bytes, bytes]]]
 
 
@@ -135,6 +137,28 @@ def _kept(row: _Row) -> ShortPostings | LongPostings:
     if postings is None or positions is None:
         raise ValueError("a short list holds its postings and positions")
     return ShortPostings(postings, positions)
+
+
+def merger(live: Ids, lengths: Ids, dead: Ids, average: float, shape: Shape) -> Merging:
+    shaped = (shape.range_shift, shape.block, shape.long, shape.lengths_shift)
+    return _native.Merging(whole(live), whole(lengths), whole(dead), average, shaped)
+
+
+@dataclass(frozen=True, slots=True)
+class MergedRows:
+    terms: Sequence[str]
+    postings: Sequence[bytes]
+    positions: Sequence[bytes]
+
+
+def lists_merged(
+    held: Merging, rows: MergedRows, most_tokens: int
+) -> tuple[tuple[Postings, ...], list[tuple[int, int]]]:
+    try:
+        made, large = held.lists(rows.terms, rows.postings, rows.positions, most_tokens)
+    except ValueError as error:
+        raise DamagedError(str(error)) from None
+    return tuple(Postings(row[0], row[1], _kept(row)) for row in made), large
 
 
 def written(built: Building, average: float, shape: Shape = SHAPE) -> Segment:

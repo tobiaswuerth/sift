@@ -9,7 +9,18 @@ import numpy as np
 
 from sift.domain.arrays import Ascending, Ids, after, among, first, firsts, ints, last, run_starts, total
 from sift.domain.codec.postings import blocked_all, lengths_of, positions_all, with_lengths
-from sift.domain.codec.segments import Lists, RangesPart, blocks_of, postings_of, ranges_joined, ranges_part
+from sift.domain.codec.segments import (
+    Lists,
+    MergedRows,
+    Merging,
+    RangesPart,
+    blocks_of,
+    lists_merged,
+    merger,
+    postings_of,
+    ranges_joined,
+    ranges_part,
+)
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Held, Policy, merges
@@ -182,6 +193,7 @@ class _Merging:
     lengths: Ids
     average: float
     shape: Shape
+    kernel: Merging
 
 
 @dataclass(eq=False, frozen=True, slots=True)
@@ -291,15 +303,11 @@ def _term_written(transaction: WritingDocuments, merging: _Merging, spans: Itera
 
 
 def _batch_written(transaction: WritingDocuments, merging: _Merging, rows: Sequence[MergedTerm]) -> None:
-    decoded = _decoded(rows)
-    starts = [at for at in range(len(rows)) if not at or rows[at].term != rows[at - 1].term] + [len(rows)]
-    sizes = [sum(decoded.held[start:end]) for start, end in itertools.pairwise(starts)]
-    for first_term, end_term in _spans(sizes, transaction.batches.tokens_a_segment):
-        span = _Span(decoded, starts[first_term], starts[end_term])
-        if end_term - first_term == 1:
-            _term_written(transaction, merging, iter([span]))
-        else:
-            _lists_written(transaction, merging, _lists(merging, span))
+    given = MergedRows([row.term for row in rows], [row.postings for row in rows], [row.positions for row in rows])
+    made, large = lists_merged(merging.kernel, given, transaction.batches.tokens_a_segment)
+    postings_added(transaction, merging.made, made)
+    for start, end in large:
+        _term_written(transaction, merging, iter([_Span(_decoded(rows[start:end]), 0, end - start)]))
 
 
 def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shape: Shape, side: Side) -> None:
@@ -315,7 +323,7 @@ def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shap
     dead = _ids(
         transaction, "SELECT place AS id FROM keyword_dead WHERE place BETWEEN ? AND ? ORDER BY place", low, high
     )
-    merging = _Merging(made, dead, live, lengths, average, shape)
+    merging = _Merging(made, dead, live, lengths, average, shape, merger(live, lengths, dead, average, shape))
     for batch in batched(_listed(transaction, merged, shape.block), transaction.batches):
         match batch:
             case TermsBatch(rows=terms_rows):

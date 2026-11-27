@@ -1,4 +1,3 @@
-import itertools
 import struct
 import zlib
 from collections.abc import Sequence
@@ -9,15 +8,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sift import _native
-from sift.domain.arrays import STORED_I64, STORED_U32, Ids, after, first, ints, largest, run_starts
+from sift.domain.arrays import STORED_I64, STORED_U32, Ids, after, whole
 from sift.domain.errors import DamagedError
 
 type Bytes = NDArray[np.uint8]
 
-LEVEL = 6
 RAW, PACKED = b"\x00", b"\x01"
 RANGES_HEAD = struct.Struct("<qI")
-MOST_GAP = 1 << 32
 GAP_BYTES = 4
 LENGTH_BYTES = 4
 COUNT_BYTES = 1
@@ -65,16 +62,12 @@ def _inflated_to(data: bytes, size: int) -> bytes:
     return found
 
 
-def _whole(values: Ids) -> Ids:
-    return np.ascontiguousarray(values, np.int64)
-
-
 def _numbers(stored: bytes) -> Ids:
     return np.frombuffer(stored, STORED_I64).astype(np.int64)
 
 
 def encoded(ids: Ids, counts: Ids, positions: Ids, bounds: Sequence[int]) -> Encoded:
-    postings, held = _native.encoded(_whole(ids), _whole(counts), _whole(positions), bounds)
+    postings, held = _native.encoded(whole(ids), whole(counts), whole(positions), bounds)
     return Encoded(tuple(postings), tuple(held))
 
 
@@ -97,7 +90,7 @@ def positions_of(data: bytes, counts: Ids) -> Ids:
 
 def positions_all(each: Sequence[bytes], counts: Ids) -> Ids:
     try:
-        found = _native.positions_all(each, _whole(counts))
+        found = _native.positions_all(each, whole(counts))
     except ValueError as error:
         raise DamagedError(str(error)) from None
     return _numbers(found)
@@ -109,12 +102,7 @@ def _ascending(start: int, gaps: NDArray[np.uint32]) -> Ids:
 
 
 def ranged(ids: Ids, counts: Ids, best: Bytes) -> bytes:
-    head = RANGES_HEAD.pack(first(ids), len(ids))
-    steps = np.diff(ids)
-    if len(steps) and (steps.min() < 1 or largest(steps) >= MOST_GAP):
-        raise ValueError("ranges not ascending, or more than 2**32 apart: more than ranges hold")
-    gaps = steps.astype(STORED_U32).tobytes()
-    return zlib.compress(head + gaps + (counts - 1).astype(np.uint8).tobytes() + best.astype(np.uint8).tobytes(), LEVEL)
+    return _native.ranged(whole(ids), whole(counts), best.astype(np.uint8).tobytes())
 
 
 def ranges_of(data: bytes) -> Ranges:
@@ -131,14 +119,7 @@ def ranges_of(data: bytes) -> Ranges:
 
 
 def with_lengths(ids: Ids, lengths: Ids, shift: int) -> dict[int, bytes]:
-    blocks = ids >> shift
-    cuts = ints(np.append(run_starts(blocks), len(ids)))
-    written: dict[int, bytes] = {}
-    for start, end in itertools.pairwise(cuts):
-        dense = np.zeros(1 << shift, STORED_U32)
-        dense[ids[start:end] & ((1 << shift) - 1)] = lengths[start:end]
-        written[first(blocks[start:])] = zlib.compress(dense.tobytes(), LEVEL)
-    return written
+    return dict(_native.with_lengths(whole(ids), whole(lengths), shift))
 
 
 def lengths_of(data: bytes, shift: int) -> Ids:

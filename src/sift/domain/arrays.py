@@ -13,6 +13,10 @@ type Mask = NDArray[np.bool_]
 type Scores = NDArray[np.float64]
 
 
+def whole(values: Ids) -> Ids:
+    return np.ascontiguousarray(values, np.int64)
+
+
 def read_only[T: np.generic](values: NDArray[T]) -> NDArray[T]:
     values.flags.writeable = False
     return values.view()
