@@ -118,3 +118,7 @@ in a manylinux image, so that they run where glibc is 2.28 or newer), publishes 
 only when the set is whole (`python -m tools release files FOLDER`), tags the commit and creates the GitHub release,
 marked a pre-release for a, b, rc and dev versions. If a job fails after PyPI took the package, re-run only the
 failed jobs.
+
+Dependabot moves the packages, the crates, the actions and the hooks, each to a release a week old. It reads neither
+the manylinux images nor rustup's checksums in the wheels workflow: the weekly audit fails once a release of those a
+week old is another than the one pinned, and names what to set (`python -m tools pins`).

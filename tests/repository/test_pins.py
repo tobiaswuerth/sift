@@ -67,3 +67,11 @@ def test_the_crates_of_the_extension_are_audited_and_updated_as_the_packages_are
     assert "  - package-ecosystem: cargo" in updates
     assert "    directory: /native\n" in updates
     assert updates.count("default-days: 7") == updates.count("package-ecosystem:")
+
+
+def test_the_pins_dependabot_cannot_read_are_checked_each_week_and_the_workflow_says_so() -> None:
+    audit = (ROOT / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    assert "      - run: python3 -m tools pins\n" in audit
+    wheels = (ROOT / ".github" / "workflows" / "wheels.yml").read_text(encoding="utf-8")
+    assert "the weekly audit says when" in wheels
+    assert "by hand" not in wheels

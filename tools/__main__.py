@@ -17,6 +17,7 @@ from tools import (
     fts5_table,
     limits,
     notices,
+    pins,
     release,
 )
 
@@ -32,6 +33,7 @@ CHECKS = MappingProxyType(
         "names": check_names.main,
         "notices": notices.main,
         "package": check_package.main,
+        "pins": pins.main,
         "prose": check_prose.main,
         "release": release.main,
         "shape": check_shape.main,

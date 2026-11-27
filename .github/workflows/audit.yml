@@ -1,7 +1,8 @@
 name: Audit
 
 # Once a week, the packages sift installs today, those of the lowest versions it names, and the crates its extension
-# is built of are checked against the advisories known for them. sift names ranges of versions, not versions, so what Dependabot reads in pyproject.toml
+# is built of are checked against the advisories known for them, and the pins nothing else moves against what
+# has been released since. sift names ranges of versions, not versions, so what Dependabot reads in pyproject.toml
 # isn't what a user gets, least of all of the packages those bring along. A finding fails this run, which GitHub
 # mails; it holds up no pull request. One against a lowest version is fixed by raising it.
 on:
@@ -49,3 +50,15 @@ jobs:
           persist-credentials: false  # no step after it pushes with git
       - run: cargo install cargo-audit --locked --version 0.23.0
       - run: cargo audit --file native/Cargo.lock --deny warnings
+
+  pins:
+    # The images Linux's wheels are built in and the rustup fetched into them are pinned in the wheels workflow,
+    # where Dependabot reads neither. This asks the registry and rust-lang.org what has been released, and fails
+    # with the digest or the checksums to set once a release a week old is another than the one pinned.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # no step after it pushes with git
+      - run: python3 -m tools pins
