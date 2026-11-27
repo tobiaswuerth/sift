@@ -17,6 +17,10 @@ def whole(values: Ids) -> Ids:
     return np.ascontiguousarray(values, np.int64)
 
 
+def integers(stored: bytes) -> Ids:
+    return np.frombuffer(stored, STORED_I64).astype(np.int64, copy=False)
+
+
 def read_only[T: np.generic](values: NDArray[T]) -> NDArray[T]:
     values.flags.writeable = False
     return values.view()
@@ -52,10 +56,6 @@ def firsts(values: NDArray[np.generic]) -> Mask:
 
 def run_starts(values: NDArray[np.generic]) -> Ids:
     return np.flatnonzero(firsts(values))
-
-
-def sums_at(values: Ids, starts: Ids) -> Ids:
-    return cast("Ids", np.add.reduceat(values, starts))
 
 
 @dataclass(eq=False, frozen=True, slots=True)

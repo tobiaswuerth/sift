@@ -8,7 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sift import _native
-from sift.domain.arrays import STORED_I64, STORED_U32, Ids, after, whole
+from sift.domain.arrays import STORED_U32, Ids, after, integers, whole
 from sift.domain.codec.shape import Shape, shaped
 from sift.domain.errors import DamagedError
 
@@ -47,16 +47,12 @@ def _inflated(data: bytes) -> bytes:
     return found
 
 
-def _numbers(stored: bytes) -> Ids:
-    return np.frombuffer(stored, STORED_I64).astype(np.int64, copy=False)
-
-
 def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
     try:
         ids, counts, bounds = _native.blocked_all(each)
     except ValueError as error:
         raise DamagedError(str(error)) from None
-    return _numbers(ids), _numbers(counts), bounds
+    return integers(ids), integers(counts), bounds
 
 
 def blocked_within(
@@ -66,7 +62,7 @@ def blocked_within(
         found = _native.blocked_within(each, numbers, whole(ranges.ids), whole(ranges.ends), shaped(shape))
     except ValueError as error:
         raise DamagedError(str(error)) from None
-    return [(_numbers(places), _numbers(counts)) for places, counts in found]
+    return [(integers(places), integers(counts)) for places, counts in found]
 
 
 def occurrences(
@@ -77,7 +73,7 @@ def occurrences(
         found, times, positions = _native.occurrences(each, bounds, whole(places), whole(counts), whole(wanted))
     except ValueError as error:
         raise DamagedError(str(error)) from None
-    return _numbers(found), _numbers(times), _numbers(positions)
+    return integers(found), integers(times), integers(positions)
 
 
 def _ascending(start: int, gaps: NDArray[np.uint32]) -> Ids:

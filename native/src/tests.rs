@@ -6,3 +6,4 @@ mod phrases;
 mod postings;
 mod segment;
 mod support;
+mod unions;

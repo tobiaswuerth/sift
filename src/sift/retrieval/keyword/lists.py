@@ -205,7 +205,11 @@ def postings_in(store: Opened, held: Ranged, chosen: Ids) -> PostingArrays:
 def everything(store: Opened, held: StoredList) -> PostingArrays:
     if isinstance(held, Whole):
         return live(store, held.segment, held.places, held.counts)
-    return postings_in(store, held, np.arange(len(held.ranges.ids)))
+    numbers = range(-(-last(held.ranges.ends) // store.shape.block))
+    blocks = _blocks(store, held, numbers)
+    places = np.concatenate([blocks[number][0] for number in numbers])
+    counts = np.concatenate([blocks[number][1] for number in numbers])
+    return live(store, held.segment, places, counts)
 
 
 def _segments_at(store: Opened, places: Ids) -> Ids:

@@ -54,6 +54,7 @@ fn native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lists::blocked_within, module)?)?;
     module.add_function(wrap_pyfunction!(lists::occurrences, module)?)?;
     module.add_function(wrap_pyfunction!(lists::phrase_counts, module)?)?;
+    module.add_function(wrap_pyfunction!(lists::summed_by_id, module)?)?;
     module.add_function(wrap_pyfunction!(lists::with_lengths, module)?)?;
     module.add_function(wrap_pyfunction!(lists::lengths_all, module)?)?;
     module.add_function(wrap_pyfunction!(lists::unpacked, module)?)?;

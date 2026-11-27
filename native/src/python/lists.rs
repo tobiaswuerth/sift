@@ -10,10 +10,12 @@ use crate::phrases::{Word, phrased};
 use crate::postings::{Owning, owned_blocks};
 use crate::python::{lengths_of, numbers_of, shaped};
 use crate::segment::{lengths_read, lengths_written};
+use crate::unions::summed;
 
 type Blocked<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Vec<usize>);
 type Counted<'py> = Vec<(Bound<'py, PyString>, usize)>;
-type Owned<'py> = Vec<(Bound<'py, PyBytes>, Bound<'py, PyBytes>)>;
+type Pair<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>);
+type Owned<'py> = Vec<Pair<'py>>;
 type Worded<'py> = (Bound<'py, PyAny>, Bound<'py, PyAny>, Bound<'py, PyAny>);
 type Occurrences<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Bound<'py, PyBytes>);
 type Unpacked<'py> = (
@@ -82,6 +84,16 @@ pub fn occurrences<'py>(
     let found = py.detach(|| occurring(&rows, &sought)).map_err(PyValueError::new_err)?;
     let stored = |numbers: &[i64]| PyBytes::new(py, &little_endian(numbers));
     Ok((stored(&found.ids), stored(&found.counts), stored(&found.positions)))
+}
+
+#[pyfunction]
+pub fn summed_by_id<'py>(ids: &Bound<'py, PyAny>, counts: &Bound<'py, PyAny>) -> PyResult<Pair<'py>> {
+    let (py, ids, counts) = (ids.py(), numbers_of(ids)?, numbers_of(counts)?);
+    let found = py.detach(|| summed(&ids, &counts)).map_err(PyValueError::new_err)?;
+    Ok((
+        PyBytes::new(py, &little_endian(&found.0)),
+        PyBytes::new(py, &little_endian(&found.1)),
+    ))
 }
 
 #[pyfunction]
