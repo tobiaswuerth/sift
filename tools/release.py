@@ -80,11 +80,11 @@ def unpublishable(files: Iterable[str], version: str) -> list[str]:
     ]
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], changelog: Path = CHANGELOG) -> int:
     match argv:
         case ["notes", version]:
             try:
-                sys.stdout.write(notes(CHANGELOG.read_text(encoding="utf-8"), version))
+                sys.stdout.write(notes(changelog.read_text(encoding="utf-8"), version))
             except RefusedError as refused:
                 sys.stderr.write(f"error  {refused}\n")
                 return 1

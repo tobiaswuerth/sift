@@ -4,7 +4,6 @@ import pytest
 
 from tools.check_package import project_version
 from tools.findings import read
-from tools.release import CHANGELOG as CHANGELOG_FILE
 from tools.release import REMEDY, RefusedError, main, notes, pre_release, unpublishable
 
 CHANGELOG = """# Changelog
@@ -68,14 +67,17 @@ def test_pre_releases_are_told_from_releases(version: str, *, pre: bool) -> None
     assert pre_release(version) is pre
 
 
-def test_the_tool_prints_the_notes_or_refuses_without_printing_any(capsys: pytest.CaptureFixture[str]) -> None:
+def test_the_tool_prints_the_notes_or_refuses_without_printing_any(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_bytes(CHANGELOG.encode())
     assert main(["notes", "0.0.0"]) == 1
     refused = capsys.readouterr()
     assert (refused.out, refused.err.startswith("error  CHANGELOG.md has no section")) == ("", True)
     assert (main(["prerelease", "2.0.0rc1"]), capsys.readouterr().out) == (0, "true\n")
     assert main(["notes"]) == 2
-    held = notes(CHANGELOG_FILE.read_text(encoding="utf-8"), "1.15.2")
-    assert (main(["notes", "1.15.2"]), capsys.readouterr().out) == (0, held)
+    assert (main(["notes", "2.0.0rc1"], changelog), capsys.readouterr().out) == (0, notes(CHANGELOG, "2.0.0rc1"))
 
 
 WHEELS = (

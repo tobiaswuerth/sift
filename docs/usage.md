@@ -11,7 +11,6 @@ The details behind the [README](https://github.com/tobiaswuerth/sift#readme).
 - [The home process](#the-home-process): `sift serve`, agents, jobs
 - [The browser UI](#the-browser-ui)
 - [Measuring search on your own documents](#measuring-search-on-your-own-documents)
-- [Coming from sift 1.x](#coming-from-sift-1x)
 
 ## Collections
 
@@ -92,11 +91,12 @@ The home process keeps one file outside the home, in your own folder (`%LOCALAPP
 |---|---|---|
 | `servers/KEY.json` | The port, process, token and version of the home process that serves a home (KEY from the home's path), and the models, OCR and GPUs it uses, readable by you only | Written by `sift serve` through `KEY.json.PID.part` for a moment, deleted when it stops; one a killed `sift serve` left is replaced by the next |
 
-`sift import` writes beside each store of sift 1.x it brings in, and writes nothing else of sift 1.x:
+`sift import` ([Updating](https://github.com/tobiaswuerth/sift#updating)) writes one file beside each store it brings
+in, and nothing else there:
 
 | Path | What | Lifecycle |
 |---|---|---|
-| `NAME-v2.sqlite` and its files as above | The collection's sift 2 store, beside sift 1.x's `NAME.sqlite` | Made by `sift import`; then a store like any other |
+| `NAME-v2.sqlite` and its files as above | The collection's store, beside the `NAME.sqlite` it was brought in from | Made by `sift import`; then a store like any other |
 
 A store can lie anywhere else:
 
@@ -151,8 +151,7 @@ Over MCP, `search` takes up to 20 queries in one call, returning the results of 
 any of them, ranked by BM25, and says it loosened the query. Write words, `"phrases"`, `prefix*` (one word of letters
 and digits), `AND`, `OR`, `NOT` and parentheses: `'"notice period" AND (contract OR agreement)'`. Operators are
 capitals; `NOT` binds closer than `AND`, and `AND` closer than `OR`. A quote inside a phrase is written `""`. A word
-under `NOT` only leaves passages out and adds nothing to a score (sift 1.x, through FTS5, added it where a passage held
-it under an `OR`).
+under `NOT` only leaves passages out and adds nothing to a score.
 
 A query sift can't read is refused, saying where: a quote or a parenthesis not closed, a `)` that closes nothing,
 `NEAR(...)`, which sift doesn't support, or a word that starts with `-`: write `NOT java` to leave out what holds it,
@@ -400,26 +399,3 @@ sift bench questions.json            # -c NAME: one collection only
 A few dozen questions are enough to compare modes, or to see whether a change helps your documents. Grades are
 optional, from 0 to 10: 2 for the answer, 1 for a useful one, 0 for one read and found irrelevant. A copy of the same
 paper listed under `also` counts as found.
-
-## Coming from sift 1.x
-
-sift 2 keeps its collections in stores of a new layout and opens none of sift 1.x. A command in a home that holds sift
-1.x's catalog and none of sift 2 says so and names the fix:
-
-```bash
-sift import                          # every collection of this home's sift 1.x
-sift import --home ~/old-sift -c notes   # one collection of another home
-```
-
-`sift import` adds each collection with its choices (where titles come from, following links, the fields of JSON
-Lines, whether it is active), indexes its folder afresh, and gives each passage whose text is unchanged the vector sift
-1.x made, so nothing is embedded twice; passages changed since are left for `sift embed`. Vectors of a model sift 1.x
-named without a whole commit stay behind, said so. The table it prints sets the counts of documents, passages and
-vectors before and after side by side.
-
-Nothing of sift 1.x is written: each new store goes beside the one it comes from, as `NAME-v2.sqlite`; a file already
-there skips that collection. Run again, an import goes on with what it added. Once the collections are as you want
-them, remove sift 1.x's stores and its `sift.db`. A store older than sift 1.8 is refused, and so is one that lacks what
-sift 1.15 writes (its counts, a code for each vector): open it once with sift 1.15, then import it. Stop sift 1.x
-before importing: a store is read as it was when its import began, and where sift 1.x keeps writing it meanwhile, it
-may have to wait. A collection whose folder is not there is not imported, as its documents are read from the folder.

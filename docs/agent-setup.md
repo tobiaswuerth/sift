@@ -44,8 +44,8 @@ on stdout).
 
    If the shell finds no `sift` after that, uv's folder of tools isn't on its `PATH`: `uv tool update-shell` adds it
    for new shells, and `uv tool dir --bin` prints the folder for this one. Without uv: `pip install sift-rag` in a
-   virtual environment. If sift later says that an NVIDIA GPU sits unused, run the command it prints. If the user ran
-   sift 1.x before, run `sift import` once (it says so itself): it brings those collections in with their vectors.
+   virtual environment. If sift later says that an NVIDIA GPU sits unused, or that the home needs an import, run the
+   command it prints.
 
 3. **Add each folder** as a collection:
 

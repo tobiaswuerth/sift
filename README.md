@@ -64,9 +64,6 @@ where it stopped. While `sift serve` runs, it answers your `sift` commands too, 
 it, each command works on its own. Or let your agent do it all: tell it to read and follow
 [Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agent-setup.md).
 
-Coming from sift 1.x? sift 2 keeps its collections in new stores: run `sift import` once, which brings the collections
-of your sift 1.x home in with their vectors, and leaves sift 1.x's files as they were.
-
 ## Connect an agent
 
 Leave `sift serve` running and register it with Claude Code once, for all projects:
@@ -119,7 +116,7 @@ fields exist.
 | `sift ui [--no-browser]` | Search, browse and read in your browser |
 | `sift jobs [--stop JOB]` | What `sift serve` does in the background, such as an agent's reindex |
 | `sift worker [--port N] [--host H]` | Embed and rerank on this machine's GPU for other machines (port 8766) |
-| `sift import [--home FOLDER] [-c NAME]` | Bring the collections of a sift 1.x home in, their vectors kept |
+| `sift import [--home FOLDER] [-c NAME]` | Bring in the collections of an older home, their vectors kept ([Updating](#updating)) |
 | `sift bench QUESTIONS.json` | How well each search mode finds the documents you expect |
 
 Every command takes `--json` for an answer in JSON and `--color` for when to colour; `sift COMMAND --help` says the
@@ -149,8 +146,9 @@ None needed: sift picks the device, its GPU memory budget and batch sizes itself
 | `TERM` | | `dumb`: no colours, and progress written line by line |
 
 The defaults are named at the commit sift pins them to. For business documents,
-`Snowflake/snowflake-arctic-embed-l-v2.0` tied the default embedding model on average in sift 1.x's measurements:
-better on financial questions and long German documents, worse on scientific claims, 1.6 times as fast.
+`Snowflake/snowflake-arctic-embed-l-v2.0` ties the default embedding model on average: better on financial questions
+and long German documents, worse on scientific claims, and faster
+([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#embedding-models)).
 
 ## Performance
 
@@ -186,6 +184,14 @@ release). When a release changes the stores' layout, its first command updates t
 embedding again. An older sift still opens such a store where the change allows it, and otherwise refuses it and
 says to upgrade, so upgrade every sift sharing a home. The
 [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) says what each update takes.
+
+**From sift 1.x**, whose stores sift 2 does not open: stop sift 1.x, then run `sift import` once in its home (or
+`sift import --home FOLDER -c NAME` for another home or one collection). It adds each collection with its choices,
+reads its folder anew and keeps the vector of every passage whose text is unchanged, so nothing is embedded twice. Each
+new store goes beside the old one as `NAME-v2.sqlite`, and nothing of sift 1.x is written: once the collections are as
+you want them, delete its stores and its `sift.db`. A store older than sift 1.15 is opened once with sift 1.15 first.
+Agents need a new session; scripts need the ids of JSON Lines records and attachments, now `FILE#KEY`, and the
+`--json` keys the changelog lists.
 
 ## Documentation
 

@@ -21,8 +21,8 @@ How sift stores what it reads and how each search ranks it. The measurements beh
 
 ## Keyword search
 
-sift's own index, written in the documents' transaction; SQLite's FTS5 is no longer used, but its tokenizer is
-reproduced exactly (a table of every code point's separators and folds), so terms are those sift 1.x had.
+sift's own index, written in the documents' transaction. Its terms are those of SQLite's `unicode61` tokenizer with
+diacritics removed, reproduced exactly as a table of every code point's separators and folds.
 
 - A term's postings hold the passages holding it, how often, and where, compressed. The short lists of a segment lie
   many to a row, a pack of about a page with its terms and their counts at its head; a long list is kept in blocks of
@@ -35,9 +35,11 @@ reproduced exactly (a table of every code point's separators and folds), so term
   passages into words, sorts them into lists and packs those on all cores; Python hands it the rows of the store and
   stores what it hands back.
 - Passages are numbered in a topical order once they have vectors (clusters of clusters of their codes), so a range's
-  passages share their words and its best scores are tight bounds. `sift index` builds the index of the new order
-  beside the one searches read, a batch at a time, and puts it in its place in one transaction: keyword search
-  answers throughout, and an order stopped midway is taken up by the next `sift index`.
+  passages share their words and its best scores are tight bounds. The clustering runs in the compiled extension, on
+  all cores. `sift index` builds the index of the new order beside the one searches read, a batch at a time, and puts
+  it in its place in one transaction: keyword search answers throughout, and an order stopped midway is taken up by
+  the next `sift index`. Eight readers, each on a connection of its own, read the passages of a batch ahead while the
+  writer tokenizes and writes, as passages in a new order lie scattered over the store.
 - BM25 (k1 1.2, b 0.75) over each passage with its document's title and front-matter values. A query is answered by
   Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): the summed best scores of a range bound
   every passage in it, so ranges are scored best bound first until none left can beat the k-th best. Words that
@@ -53,6 +55,11 @@ reproduced exactly (a table of every code point's separators and folds), so term
   bfloat16 where the GPU has it and float32 elsewhere; vectors are stored as fp16. The default models load at a commit
   sift pins, so that what their owners push later changes no vector; a store records the model at its commit, and
   `sift embed` refuses to mix models.
+- `sift embed` reads 16,384 passages at a time, embeds them longest first, so that a batch's texts are of similar
+  length, and writes their vectors at once; a thread cuts the next batch's words while the model runs. On an NVIDIA
+  GPU, with 20,000 passages or more to embed, it first compiles the model with PyTorch (Triton's kernels, the whole
+  model as one graph): 20 to 60 seconds once a process, then about twice the passages a second. Queries, single texts
+  and other devices use the model as it is.
 - Each vector's signs, one bit per dimension, are held in memory: 96 bytes for 768 dimensions. A query is compared with
   every code by Hamming distance, without an index to build or tune. The nearest 10,000 are ranked again by the
   query's own floats against their bits, and the best 1,000 are scored exactly with their vectors.
