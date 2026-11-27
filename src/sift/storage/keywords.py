@@ -11,7 +11,7 @@ import numpy as np
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, DocumentId, first_row
 from sift.domain.arrays import ints
-from sift.domain.codec.segments import GAP, Segment, segment, stream
+from sift.domain.codec.segments import GAP, Building, Segment, building, stream, written
 from sift.domain.codec.shape import FORMAT, SHAPE, Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.keyword_state import KeywordState, keyword_state, remaking
@@ -137,27 +137,32 @@ def _streams(transaction: Reading, spans: Sequence[Span]) -> Iterator[list[str]]
             yield stream(title, [seen.setdefault(each, each) for each in tokens(text)], meta)
 
 
-def _up_to(streams: Iterator[list[str]], most: int) -> Iterator[list[str]]:
-    held = 0
-    for each in streams:
-        yield each
-        held += len(each)
-        if held >= most:
-            return
+def _taken(transaction: Reading, built: Building, spans: Sequence[Span]) -> int:
+    wanted = json.dumps(sorted({span.document for span in spans}))
+    cut = MOST_FIELD_CHARACTERS + 1
+    documents = rows(transaction, Named, DOCUMENTS, (cut, cut, wanted))
+    at = {held.id: number for number, held in enumerate(documents)}
+    fields = [(held.title, held.meta or "") for held in documents]
+    texts = spans_text(transaction, [TextSpan(span.document, span.start, span.length) for span in spans])
+    places = np.array([span.id for span in spans], np.int64)
+    return built.add(places, [at[span.document] for span in spans], fields, texts)
 
 
-def streams_of(transaction: WritingDocuments, spans: Sequence[Span]) -> list[list[str]]:
-    return list(_up_to(_streams(transaction, spans), transaction.batches.tokens_a_segment))
+def built_of(transaction: WritingDocuments, spans: Sequence[Span]) -> Building:
+    built = building(transaction.batches.tokens_a_segment)
+    for start in range(0, len(spans), TEXTS_AT_ONCE):
+        part = spans[start : start + TEXTS_AT_ONCE]
+        if _taken(transaction, built, part) < len(part):
+            break
+    return built
 
 
-def segment_written(
-    transaction: Writing, spans: Sequence[Span], streams: Sequence[Sequence[str]], average: float, shape: Shape
-) -> Segment:
-    written = segment(np.array([span.id for span in spans], np.int64), streams, average, shape)
-    made = segment_added(transaction, Head(written.first, written.last, written.chunks, written.average))
-    postings_added(transaction, made, written.postings)
-    lengths_added(transaction, made, written.lengths)
-    return written
+def segment_written(transaction: Writing, built: Building, average: float, shape: Shape) -> Segment:
+    made = written(built, average, shape)
+    segment = segment_added(transaction, Head(made.first, made.last, made.chunks, made.average))
+    postings_added(transaction, segment, made.postings)
+    lengths_added(transaction, segment, made.lengths)
+    return made
 
 
 def _terms_added(transaction: Writing, added: Iterable[tuple[str, int]], tokens_added: int) -> None:
@@ -189,14 +194,13 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
     )
     if not spans:
         return 0
-    streams = streams_of(transaction, spans)
-    spans = spans[: len(streams)]
+    built = built_of(transaction, spans)
     (indexed,) = rows(transaction, Count, "SELECT coalesce(sum(chunks - dead), 0) FROM keyword_segments")
-    average = (totals(transaction).tokens + _tokens(streams)) / (indexed.n + len(spans))
-    written = segment_written(transaction, spans, streams, average, shape)
-    _terms_added(transaction, ((p.term, p.chunks) for p in written.postings), written.tokens)
-    run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (str(written.last), THROUGH_KEY))
-    return len(spans)
+    average = (totals(transaction).tokens + built.tokens) / (indexed.n + built.chunks)
+    made = segment_written(transaction, built, average, shape)
+    _terms_added(transaction, ((p.term, p.chunks) for p in made.postings), made.tokens)
+    run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (str(made.last), THROUGH_KEY))
+    return made.chunks
 
 
 def index_new(transaction: WritingDocuments) -> None:

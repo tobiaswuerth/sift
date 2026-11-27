@@ -14,10 +14,10 @@ fn taken(total: u64) -> usize {
     usize::try_from(total).unwrap_or(usize::MAX)
 }
 
-fn deflated(body: &[u8]) -> Result<Vec<u8>, String> {
+pub fn deflated(body: &[u8], lead: Option<u8>) -> Result<Vec<u8>, String> {
     let mut packing = Compress::new(Compression::new(LEVEL), true);
     let mut packed = Vec::with_capacity(body.len() / 2 + ROOM);
-    packed.push(PACKED);
+    packed.extend(lead);
     loop {
         let rest = &body[taken(packing.total_in())..];
         let status = packing
@@ -32,7 +32,7 @@ fn deflated(body: &[u8]) -> Result<Vec<u8>, String> {
 
 pub fn wrapped(body: &[u8]) -> Result<Vec<u8>, String> {
     if body.len() >= PACKED_FROM {
-        return deflated(body);
+        return deflated(body, Some(PACKED));
     }
     let mut raw = Vec::with_capacity(body.len() + 1);
     raw.push(RAW);

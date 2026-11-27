@@ -1,6 +1,9 @@
+mod building;
 mod lists;
 mod numbers;
 mod packed;
+mod segment;
+mod words;
 
 use pyo3::prelude::*;
 
@@ -9,5 +12,7 @@ fn native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lists::blocked_all, module)?)?;
     module.add_function(wrap_pyfunction!(lists::positions_all, module)?)?;
     module.add_function(wrap_pyfunction!(lists::encoded, module)?)?;
+    module.add_class::<building::Words>()?;
+    module.add_class::<building::Building>()?;
     Ok(())
 }

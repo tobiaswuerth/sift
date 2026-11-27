@@ -17,10 +17,10 @@ from sift.storage.keyword_merges import settled
 from sift.storage.keyword_meta import Side
 from sift.storage.keywords import (
     Span,
+    built_of,
     current,
     segment_written,
     shape_of,
-    streams_of,
     totals,
     writing_keywords,
 )
@@ -59,9 +59,8 @@ def _indexed(transaction: WritingDocuments, shape: Shape) -> int:
     spans = rows(transaction, Span, SPANS, (transaction.batches.chunks_a_segment,))
     if not spans:
         return 0
-    streams = streams_of(transaction, spans)
     held = totals(transaction)
-    written = segment_written(transaction, spans[: len(streams)], streams, held.tokens / held.chunks, shape)
+    written = segment_written(transaction, built_of(transaction, spans), held.tokens / held.chunks, shape)
     run(transaction, "UPDATE keyword_beside SET through = ?", (written.last,))
     return written.chunks
 

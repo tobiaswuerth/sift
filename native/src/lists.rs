@@ -27,7 +27,7 @@ struct Blocks {
     bounds: Vec<usize>,
 }
 
-type Coded = (Vec<u8>, Vec<u8>);
+pub type Coded = (Vec<u8>, Vec<u8>);
 
 fn each_of<T, F>(rows: &[PyBackedBytes], one: F) -> Result<Vec<T>, String>
 where
@@ -134,11 +134,11 @@ fn places(rows: &[PyBackedBytes], counts: &[i64]) -> Result<Vec<i64>, String> {
     Ok(found)
 }
 
-struct Lists<'a> {
-    ids: &'a [i64],
-    counts: &'a [i64],
-    positions: &'a [i64],
-    offsets: Vec<usize>,
+pub struct Lists<'a> {
+    pub ids: &'a [i64],
+    pub counts: &'a [i64],
+    pub positions: &'a [i64],
+    pub offsets: Vec<usize>,
 }
 
 fn offsets(counts: &[i64], positions: usize) -> Result<Vec<usize>, String> {
@@ -157,7 +157,7 @@ fn offsets(counts: &[i64], positions: usize) -> Result<Vec<usize>, String> {
     }
 }
 
-fn list(lists: &Lists, start: usize, end: usize) -> Result<Coded, String> {
+pub fn list(lists: &Lists, start: usize, end: usize) -> Result<Coded, String> {
     if start >= end || end > lists.ids.len() {
         return Err("a list holds no id, or more than there are".to_owned());
     }
@@ -202,7 +202,7 @@ fn bytes_of(each: &Bound<'_, PyAny>) -> PyResult<Vec<PyBackedBytes>> {
     each.extract()
 }
 
-fn numbers_of(held: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
+pub fn numbers_of(held: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
     PyBuffer::<i64>::get(held)?.to_vec(held.py())
 }
 

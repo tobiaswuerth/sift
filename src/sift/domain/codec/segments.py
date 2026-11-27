@@ -1,16 +1,23 @@
+import functools
 import itertools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ids, Scores, first, ints, largest, last, maxima_at, run_starts, sums_at, total
-from sift.domain.codec.postings import encoded, ranged, with_lengths
+from sift import _native
+from sift.domain.arrays import STORED_U32, Ids, Scores, maxima_at, run_starts, sums_at
+from sift.domain.codec.postings import encoded, ranged
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.rank.bm25 import quantized, term_scores
+from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, TRANSLATION
 
 GAP = ""
-MOST_TIMES = 1024
+POINTS = 0x110000
+DROPPED = 0xFFFFFFFF
+
+type Building = _native.Building
+type _Row = tuple[str, int, bytes | None, bytes | None, bytes | None, list[tuple[bytes, bytes]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,18 +99,6 @@ def _cuts(term_starts: list[int], end: int, shape: Shape) -> list[int]:
     return [*found, end]
 
 
-def _coded(streams: Sequence[Sequence[str]]) -> tuple[list[str], Ids, Ids, Ids]:
-    flat = list(itertools.chain.from_iterable(streams))
-    vocabulary = {GAP: 0}
-    for token in sorted(set(flat) - vocabulary.keys()):
-        vocabulary[token] = len(vocabulary)
-    codes = np.fromiter(map(vocabulary.__getitem__, flat), np.int64, len(flat))
-    sizes = np.fromiter(map(len, streams), np.int64, len(streams))
-    owners = np.repeat(np.arange(len(streams)), sizes)
-    places = np.arange(len(flat)) - np.repeat(np.cumsum(sizes) - sizes, sizes)
-    return list(vocabulary), codes, owners, places
-
-
 def postings_of(lists: Lists, average: float, shape: Shape = SHAPE) -> tuple[Postings, ...]:
     end = len(lists.ids)
     coded = encoded(lists.ids, lists.counts, lists.positions, _cuts(list(lists.starts), end, shape))
@@ -121,25 +116,29 @@ def postings_of(lists: Lists, average: float, shape: Shape = SHAPE) -> tuple[Pos
     return tuple(written)
 
 
-def _capped(counts: Ids, places: Ids) -> tuple[Ids, Ids]:
-    if not len(counts) or largest(counts) <= MOST_TIMES:
-        return counts, places
-    nth = np.arange(len(places)) - np.repeat(np.cumsum(counts) - counts, counts)
-    return np.minimum(counts, MOST_TIMES), places[nth < MOST_TIMES]
+@functools.cache
+def _words() -> _native.Words:
+    held = np.arange(POINTS, dtype=STORED_U32)
+    for point, kept in TRANSLATION.items():
+        held[point] = ord(kept) if kept else DROPPED
+    return _native.Words(held.tobytes())
 
 
-def segment(ids: Ids, streams: Sequence[Sequence[str]], average: float, shape: Shape = SHAPE) -> Segment:
-    names, codes, owners, places = _coded(streams)
-    kept = codes.astype(np.bool_)
-    lengths = np.bincount(owners[kept], minlength=len(streams)).astype(np.int64)
-    order = np.argsort(codes[kept], kind="stable")
-    codes, owners, places = codes[kept][order], owners[kept][order], places[kept][order]
-    posting_starts = run_starts(codes * len(streams) + owners)
-    counts, places = _capped(np.diff(np.append(posting_starts, len(codes))), places)
-    terms, holders = codes[posting_starts], owners[posting_starts]
-    term_starts = ints(run_starts(terms))
-    named = tuple(names[code] for code in ints(terms[term_starts]))
-    lists = Lists(named, tuple(term_starts), ids[holders], counts, places, lengths[holders])
-    written = postings_of(lists, average, shape)
-    lengths_written = with_lengths(ids, lengths, shape.lengths_shift)
-    return Segment(first(ids), last(ids), len(ids), total(lengths), average, written, lengths_written)
+def building(most_tokens: int) -> Building:
+    return _words().building(most_tokens, MOST_FIELD_CHARACTERS)
+
+
+def _kept(row: _Row) -> ShortPostings | LongPostings:
+    _, _, postings, positions, ranges, blocks = row
+    if ranges is not None:
+        return LongPostings(ranges, tuple(ShortPostings(*each) for each in blocks))
+    if postings is None or positions is None:
+        raise ValueError("a short list holds its postings and positions")
+    return ShortPostings(postings, positions)
+
+
+def written(built: Building, average: float, shape: Shape = SHAPE) -> Segment:
+    chunks, tokens = built.chunks, built.tokens
+    first, last, rows, lengths = built.written(average, shape.range_shift, shape.block, shape.long, shape.lengths_shift)
+    postings = tuple(Postings(row[0], row[1], _kept(row)) for row in rows)
+    return Segment(first, last, chunks, tokens, average, postings, dict(lengths))

@@ -35,7 +35,6 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.domain.codec.postings` | `COUNT_BYTES` | `1` |
 | `sift.domain.codec.postings` | `BEST_BYTES` | `1` |
 | `sift.domain.codec.postings` | `MOST_INFLATED_BYTES` | `64 << 20` |
-| `sift.domain.codec.segments` | `MOST_TIMES` | `1024` |
 | `sift.domain.codec.shape` | `MOST_RANGE_SHIFT` | `8` |
 | `sift.domain.codec.shape` | `MOST_BLOCK` | `1 << 12` |
 | `sift.domain.codec.shape` | `MOST_LENGTHS_SHIFT` | `20` |
@@ -133,3 +132,4 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `native::lists` | `MOST_POSITION` | `1 << 32` |
 | `native::numbers` | `MOST_BYTES` | `9` |
 | `native::packed` | `MOST_INFLATED` | `64 << 20` |
+| `native::segment` | `MOST_TIMES` | `1024` |
