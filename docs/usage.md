@@ -78,9 +78,9 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`), but stores placed else
 | `collections/NAME.sqlite`, `NAME.sqlite-wal`, `NAME.sqlite-shm` | A collection's store: documents, passages, the keyword index, links, vectors | Made by `sift add`, moved by `sift move`, deleted by `sift rm` (one open elsewhere then, by the next `sift index`) |
 | `collections/NAME.sqlite.writer`, `NAME.sqlite.writer-journal` | Locked while a command writes the store, so one writes at a time | Made by the first write; moved and deleted with the store |
 | `NAME.sqlite.part`, `NAME.sqlite.part-journal` | A store being copied to another drive by `sift move`, at its new place | Renamed to the store once copied; deleted if the copy stops |
-| `server.writer` | Locked while `sift serve` serves this home, so one home process serves it | Made by the first `sift serve`; delete freely while none runs |
+| `server.writer`, `server.writer-journal` | Locked while `sift serve` serves this home, so one home process serves it | Made by the first `sift serve`; delete freely while none runs |
 | `worker/token`, `worker/cert.pem`, `worker/key.pem` | `sift worker`'s access token, certificate and private key, readable by you only | Made on its first start, each through `FILE.PID.part` for a moment; delete the folder to make a new key |
-| `worker.writer` | Locked while `sift worker` runs | Made by the first `sift worker`; delete freely while none runs |
+| `worker.writer`, `worker.writer-journal` | Locked while `sift worker` runs | Made by the first `sift worker`; delete freely while none runs |
 | `logs/COMMAND-DATE.log` | What `add`, `rm`, `move`, `activate`, `deactivate`, `index`, `embed`, `serve`, `worker` and `import` said, timed, with errors; the home process's requests by name and time, without their queries; `sift serve --stdio` writes its own, `stdio-DATE.log` | The latest 20 of each command kept; past 16 MB a log goes on in a new part, its last 3 kept as `.log.1` (the latest) to `.log.3`; delete freely |
 | `update.json` | With `SIFT_UPDATE_CHECK=on`: when PyPI was asked, the latest version it named, or why asking failed | Rewritten at most daily, through `update.json.RANDOM` for a moment; delete freely |
 
@@ -91,7 +91,7 @@ The home process keeps one file outside the home, in your own folder (`%LOCALAPP
 |---|---|---|
 | `servers/KEY.json` | The port, process, token and version of the home process that serves a home (KEY from the home's path), and the models, OCR and GPUs it uses, readable by you only | Written by `sift serve` through `KEY.json.PID.part` for a moment, deleted when it stops; one a killed `sift serve` left is replaced by the next |
 
-`sift import` ([Updating](https://github.com/tobiaswuerth/sift#updating)) writes one file beside each store it brings
+`sift import` ([Updating](https://github.com/tobiaswuerth/sift#updating)) writes a store beside each one it brings
 in, and nothing else there:
 
 | Path | What | Lifecycle |

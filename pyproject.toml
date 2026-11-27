@@ -127,7 +127,7 @@ cache-keys = [
 ]
 
 # The extension sift._native is the crate in native/, built with the package: the lists of the keyword index are
-# encoded, decoded and merged there, on every core.
+# encoded, decoded, merged and searched there, and the passages clustered into their topical order, on every core.
 [tool.maturin]
 manifest-path = "native/Cargo.toml"
 python-source = "src"

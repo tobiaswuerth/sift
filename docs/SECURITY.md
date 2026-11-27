@@ -41,6 +41,6 @@ Expect a first reply within a week. Security fixes go into the latest release.
   version of sift pins it to: what a model's owner pushes later reaches no one until a release of sift moves the pin.
   Another model must be named at a whole commit too. Scans are rendered with PDFium, which runs no scripts they hold.
 - **Updates.** Off unless `SIFT_UPDATE_CHECK=on`. Then a command run in a terminal asks PyPI for sift's latest version
-  at most once a day, in its own process, waiting at most 5 seconds: a plain HTTPS GET of
+  at most once a day, on a thread of the command, waiting at most 5 seconds: a plain HTTPS GET of
   `https://pypi.org/pypi/sift-rag/json` with `User-Agent: sift/<version>`, sending nothing of you or your files.
   `HF_HUB_OFFLINE=1` stops it too. sift never updates itself: it says which command would.

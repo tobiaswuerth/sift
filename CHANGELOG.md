@@ -8,7 +8,7 @@ and versions follow [Semantic Versioning](https://semver.org/). Releases before 
 
 sift 2: stores of a new layout with a keyword index of its own, built by a compiled core, and a home process that
 answers agents, the browser and your own commands. A home of an older sift is brought in by `sift import`, once, as
-the [README](README.md#updating) says; any command in such a home says so too.
+the [README](README.md#updating) says; until a collection is added there, any command in such a home says so too.
 
 ### Changed
 
@@ -25,7 +25,8 @@ the [README](README.md#updating) says; any command in such a home says so too.
   and refuses the rest, saying to upgrade. A keyword index of a newer format is refused likewise, never made anew.
 - Keyword search reads sift's own index, written in the documents' transaction, so nothing is behind after
   `sift index`. Its terms are those of SQLite's `unicode61` tokenizer, without diacritics, ranked by BM25. A query sift
-  can't read is refused, saying where: a quote or a parenthesis not closed, a `)` closing nothing.
+  can't read is refused, saying where: a quote or a parenthesis not closed, a `)` closing nothing, a word starting
+  with `-` (`NOT word` leaves it out).
 - When `sift index` puts the passages in their topical order, it builds the index of that order beside the one
   searches read, its passages read by eight readers at once, and switches to it in one transaction: keyword search
   answers throughout, and an order stopped midway is taken up by the next run.
@@ -38,17 +39,25 @@ the [README](README.md#updating) says; any command in such a home says so too.
   and `reindex`, which runs as a job of the home process. Agents need a new session to see them.
 - A JSON Lines record and a mail attachment are named after their file and a `#`: `papers/2024.jsonl#2401.00001` and
   `mail/offer.eml#contract.pdf`.
-- `--json` answers are objects. A search gives `hits`, with what was searched, left out, loosened or cut short beside
-  them, and each hit its `collection`, `path`, `first_line` and `last_line`. `sift status` gives `home`, and for each
-  collection `folder`, `agents` and its counts under `contents`: `documents`, `chunks`, `embedded`, `model`,
-  `stored_bytes`, `unreadable`. `sift links --json` gives `out` and `into`, each `null` where it was not asked for, a
-  linking document its `lines` and `through`; `sift unresolved --json` gives `targets`.
+- `--json` answers are objects, and so are refusals and failures:
+  `{"error": {"kind": ..., "code": ..., "message": ..., "remedy": ..., "field": ...}}`. A search gives `hits`, with
+  what was searched, left out, loosened or cut short beside them, and each hit its `collection`, `path`, `first_line`
+  and `last_line`. `sift status` gives `home`, and for each collection `folder`, `agents` and its counts under
+  `contents`: `documents`, `chunks`, `embedded`, `model`, `stored_bytes`, `unreadable`. `sift links --json` gives `out`
+  and `into`, each `null` where it was not asked for, a linking document its `lines` and `through`;
+  `sift unresolved --json` gives `targets`.
 - A request sift refuses as written (an unknown flag, a value out of range, a query it can't read) ends with exit
   code 2, any other failure with 1.
 - A `SIFT_` variable sift doesn't know, a misspelt one or one of a newer sift, is refused by every command, naming it.
 - `sift status` prints a table; `--json` gives JSON.
-- `sift index --file A --file B` names files to read; `sift add` names the fields of JSON Lines with `--id-field`,
-  `--title-field` and `--text-fields`.
+- `sift index --file A --file B` names files to read, in place of `--files`; `sift add` names the fields of JSON
+  Lines with `--id-field`, `--title-field` and `--text-fields`, in place of `--id`, `--title` and `--text`.
+- A folder holding `.obsidian/` is titled by file name unless `--title-from` says otherwise, as Obsidian names its
+  notes.
+- A collection's name has at most 100 characters and is none Windows keeps for a device (`con`, `nul`, `com1`, …),
+  on every system.
+- `sift move` runs beside `sift serve`: it waits for the searches reading the store, and the next searches wait for
+  it.
 - A model other than the defaults is named at a whole commit (`owner/model@<40 hex digits>`) or as a folder: a
   branch, a tag or a short commit is refused, as each may name other weights tomorrow.
 - `SIFT_UPDATE_CHECK` is off by default. Turned on, a command run in a terminal says when a newer sift is out and which

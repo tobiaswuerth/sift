@@ -25,7 +25,7 @@ Protocol) server. Everything runs on your own machines: no cloud services, no AP
 - **Runs on what you have:** NVIDIA or Apple GPUs, the CPU, or another machine's GPU, on Linux, macOS and Windows.
 
 sift retrieves; it doesn't generate answers, watch files (an agent calls `reindex` after writing), OCR images other
-than the pages of PDFs, or answer other machines: its server listens on 127.0.0.1 alone.
+than the pages of PDFs, or serve searches to other machines: its server listens on 127.0.0.1 alone.
 
 ## Install
 
@@ -42,8 +42,8 @@ sources, which needs Rust 1.100 or newer and a C compiler. The first use downloa
 (about 2 GB), each at the commit this version of sift pins: what their owners push later changes no vectors. The first
 scan read on a GPU downloads a third, for OCR.
 
-sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, where `query` takes 15 to 25 seconds a
-question instead of half of one. PyTorch from PyPI uses the GPU on Linux and macOS. On Windows, `--torch-backend auto`
+sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, where `query` takes about 20 seconds a
+question instead of about one. PyTorch from PyPI uses the GPU on Linux and macOS. On Windows, `--torch-backend auto`
 installs the CUDA build for your driver; with pip, install PyTorch's CUDA build as
 [pytorch.org](https://pytorch.org/get-started/locally/) shows for your system. If an NVIDIA GPU sits unused, sift says
 so and prints the fix, `uv tool install --reinstall --torch-backend auto sift-rag`. A machine without a GPU can
@@ -164,11 +164,11 @@ desktop workstation whose CPU and GPU another job shared (median of 8 questions 
 | A question for RAG, reranked on the GPU | `query` | 1.1 s |
 | Documents like one | `similar` | 0.6 s |
 
-Asked again, with what they read in memory, each takes about half. The first semantic search of `sift serve` loads
-the models and the vectors' codes, which it then keeps: for those 45.7 million passages, 104 seconds from a cold
-disk. `sift embed` embeds 1,180 abstracts a second on that GPU, after compiling the model for 20 seconds; `sift index`
-puts 3.3 million passages of arXiv in their topical order in two minutes. Every figure and how it was measured:
-[benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md).
+Asked again, with what they read in memory, each takes a fifth to a half as long. The first semantic search of
+`sift serve` loads the models and the vectors' codes, which it then keeps: for those 45.7 million passages, 104
+seconds from a cold disk. `sift embed` embeds 1,180 abstracts a second on that GPU, after compiling the model for 20
+seconds; `sift index` puts 3.3 million passages of arXiv in their topical order in two minutes. Every figure and how
+it was measured: [benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md).
 
 ## Updating
 
@@ -187,13 +187,14 @@ embedding again. An older sift still opens such a store where the change allows 
 says to upgrade, so upgrade every sift sharing a home. The
 [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) says what each update takes.
 
-**From sift 1.x**, whose stores sift 2 does not open: stop sift 1.x, then run `sift import` once in its home (or
-`sift import --home FOLDER -c NAME` for another home or one collection). It adds each collection with its choices,
-reads its folder anew and keeps the vector of every passage whose text is unchanged, so nothing is embedded twice. Each
-new store goes beside the old one as `NAME-v2.sqlite`, and nothing of sift 1.x is written: once the collections are as
-you want them, delete its stores and its `sift.db`. A store older than sift 1.15 is opened once with sift 1.15 first.
-Agents need a new session; scripts need the ids of JSON Lines records and attachments, now `FILE#KEY`, and the
-`--json` keys the changelog lists.
+**From sift 1.x**, whose stores sift 2 does not open: before upgrading, open a store older than sift 1.15 once with
+sift 1.15. Then stop sift 1.x, run `sift import` once in its home (or `sift import --home FOLDER -c NAME` for another
+home or one collection), and `sift embed`. The import adds each collection with its choices, reads its folder anew and
+keeps the vector of every passage whose text and title are unchanged, unless the model names no whole commit; the
+embedding embeds the rest. Each new store goes beside the old one as `NAME-v2.sqlite`, and nothing of sift 1.x is
+written: once the collections are as you want them, delete its stores, `sift.db`, `numba/`, `update.lock` and update
+logs. Workers need sift 2 as well and agents a new session; scripts need the ids of JSON Lines records and
+attachments, now `FILE#KEY`, and the `--json` keys the changelog lists.
 
 ## Documentation
 

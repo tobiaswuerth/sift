@@ -12,11 +12,12 @@ uv sync
 uv run pre-commit install
 ```
 
-The lists of the keyword index are built and merged by a Rust extension, the crate in `native/`. Install
-[rustup](https://rustup.rs) and a C compiler first: `uv sync` builds the extension, and builds it again whenever the
-crate changed. `rust-toolchain.toml` names the toolchain, which rustup fetches on the first build. Every package
-carries the licences of the crates built into the extension, in `native/THIRD-PARTY-NOTICES`: after a change of
-the crate's dependencies, `python -m tools notices --write` writes that file anew.
+A Rust extension, the crate in `native/`, builds, merges and searches the lists of the keyword index and clusters
+the passages into their topical order. Install [rustup](https://rustup.rs) and a C compiler first: `uv sync` builds
+the extension, and builds it again whenever the crate changed. `rust-toolchain.toml` names the toolchain, which rustup
+fetches on the first build. Every package carries the licences of the crates built into the extension, in
+`native/THIRD-PARTY-NOTICES`: after a change of the crate's dependencies, `python -m tools notices --write` writes
+that file anew.
 
 ## The gate
 
@@ -121,4 +122,7 @@ failed jobs.
 
 Dependabot moves the packages, the crates, the actions and the hooks, each to a release a week old. It reads neither
 the manylinux images nor rustup's checksums in the wheels workflow: the weekly audit fails once a release of those a
-week old is newer than the one pinned, and names what to set (`python -m tools pins`).
+week old is newer than the one pinned, and names what to set (`python -m tools pins`). Nothing tells of newer
+releases of the rest, which are moved by hand: the Rust toolchain in `native/rust-toolchain.toml`, the uv of the
+workflows (setup-uv's `version`), pip-audit and cargo-audit in the audit workflow, and twine and cargo-llvm-cov in
+`noxfile.py` and the wheels workflow.

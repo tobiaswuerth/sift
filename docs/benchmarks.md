@@ -42,8 +42,8 @@ process's cache of results cannot answer ("warm": what they read is in memory by
 - **On the CPU alone**, over Swiss federal law and the notes (76,738 passages), `query` took 14 to 23 s a question
   (median 19 s); `search`, `vsearch` and `similar` stayed under 0.2 s.
 
-**Indexing**, by `sift import`, which reads every file anew and keeps the vectors of the passages it finds
-unchanged; then `sift index`, which puts each collection in its topical order:
+**Indexing**: reading every file into a new store, then `sift index`, which puts each collection in its topical
+order:
 
 | Collection | Files | Passages | Reading the files | Merging | Topical order: clusters / index built beside / merged |
 |---|---|---|---|---|---|
@@ -124,8 +124,8 @@ Ettin-150M:
 
   score = rerank + w · (σ<sub>rerank</sub> / σ<sub>cosine</sub>) · (cosine − mean cosine)
 
-  σ is the standard deviation over the candidates. w = 0.5 is the best or tied-best weight under every reranker and
-  embedding model below.
+  σ is the standard deviation over the candidates. sift uses w = 0.5, which ties the best weight under its reranker
+  (below).
 
 ### Rerankers
 

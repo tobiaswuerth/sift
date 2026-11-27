@@ -44,8 +44,7 @@ on stdout).
 
    If the shell finds no `sift` after that, uv's folder of tools isn't on its `PATH`: `uv tool update-shell` adds it
    for new shells, and `uv tool dir --bin` prints the folder for this one. Without uv: `pip install sift-rag` in a
-   virtual environment. If sift later says that an NVIDIA GPU sits unused, or that the home needs an import, run the
-   command it prints.
+   virtual environment. If sift later says that an NVIDIA GPU sits unused, run the command it prints.
 
 3. **Add each folder** as a collection:
 
@@ -68,7 +67,8 @@ on stdout).
    sift embed    # embeds every passage without a vector
    ```
 
-   The first `sift embed` downloads the models from Hugging Face (about 2 GB). Both commands process only what
+   The first `sift embed` downloads the embedding model from Hugging Face, the first `query` the reranker (about
+   2 GB together). Both commands process only what
    changed since their last run, and `sift embed`, interrupted, goes on where it stopped. On a GPU it embeds a hundred
    or more passages a second, so a large collection takes a while: run it where the user sees its progress, and don't
    let a timeout of yours end it. `sift status` shows each collection's documents, passages and how many are

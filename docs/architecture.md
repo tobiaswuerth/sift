@@ -39,7 +39,9 @@ diacritics removed, reproduced exactly as a table of every code point's separato
   all cores. `sift index` builds the index of the new order beside the one searches read, a batch at a time, and puts
   it in its place in one transaction: keyword search answers throughout, and an order stopped midway is taken up by
   the next `sift index`. Eight readers, each on a connection of its own, read the passages of a batch ahead while the
-  writer tokenizes and writes, as passages in a new order lie scattered over the store.
+  writer tokenizes and writes, as passages in a new order lie scattered over the store. They read the same way when
+  `sift index` remakes an index in place that another version of sift, or a SQLite rendering numbers otherwise, wrote;
+  keyword search refuses that store until the remake is done.
 - BM25 (k1 1.2, b 0.75) over each passage with its document's title and front-matter values. A query is answered by
   Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): the summed best scores of a range bound
   every passage in it, so ranges are scored best bound first until none left can beat the k-th best. Words that
@@ -93,5 +95,6 @@ and go without the notes linking to them being read again.
   and the vectors' codes, and answers MCP, the UI and the CLI's commands. Searches run side by side, and beside an
   index or an embed, whose transactions they read past; only removing or moving a collection waits for the searches
   reading its store.
-- It keeps the embeddings of the last 256 questions and the results of the last 32 searches until anything is written.
+- It keeps the embeddings of the last 256 questions and, until anything is written, the results of the last 32
+  searches.
 - The UI is rendered on the server, page by page, and runs no scripts.
