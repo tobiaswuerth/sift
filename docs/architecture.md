@@ -24,9 +24,16 @@ How sift stores what it reads and how each search ranks it. The measurements beh
 sift's own index, written in the documents' transaction; SQLite's FTS5 is no longer used, but its tokenizer is
 reproduced exactly (a table of every code point's separators and folds), so terms are those sift 1.x had.
 
-- A term's postings hold the passages holding it, how often, and where, in blocks of up to 4,096, compressed. For every
-  128 consecutive passages they also keep the term's best score there. A changed collection gets a new segment, and
-  segments are merged as they accumulate.
+- A term's postings hold the passages holding it, how often, and where, compressed. The short lists of a segment lie
+  many to a row, a pack of about a page with its terms and their counts at its head; a long list is kept in blocks of
+  up to 4,096 passages, and for every 128 consecutive passages it keeps the term's best score there. A changed
+  collection gets a new segment, and segments are merged as they accumulate.
+- Nothing of the index spans its segments. In how many passages a term occurs is the sum of its segments' counts,
+  less what was deleted from them since, which each segment counts until a merge drops it: writing a segment costs
+  the same in a large store as in a small one.
+- Building a segment and merging segments is the work of a compiled extension written in Rust (`native/`). It splits
+  passages into words, sorts them into lists and packs those on all cores; Python hands it the rows of the store and
+  stores what it hands back.
 - Passages are numbered in a topical order once they have vectors (clusters of clusters of their codes), so a range's
   passages share their words and its best scores are tight bounds. `sift index` builds the index of the new order
   beside the one searches read, a batch at a time, and puts it in its place in one transaction: keyword search
@@ -35,9 +42,9 @@ reproduced exactly (a table of every code point's separators and folds), so term
   Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): the summed best scores of a range bound
   every passage in it, so ranges are scored best bound first until none left can beat the k-th best. Words that
   together cannot reach it are read only where the others bring a passage within reach.
-- Phrases are bounded by their words, then matched by their positions; prefixes are expanded from the dictionary of
-  terms. With a time budget, a search stops once it is spent and has found anything, returning the best so far marked
-  `partial`.
+- Phrases are bounded by their words, then matched by their positions; a prefix is expanded from the terms of the
+  packs between its bounds, counted no further than the most words a search expands. With a time budget, a search
+  stops once it is spent and has found anything, returning the best so far marked `partial`.
 - Over several collections, terms are weighted by the counts of all of them, as one index would.
 
 ## Vectors and `vsearch`
