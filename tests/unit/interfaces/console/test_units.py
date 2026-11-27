@@ -66,3 +66,19 @@ def test_a_rate_is_whole_from_ten_a_second_on_and_says_its_unit(
     done: int, seconds: float, unit: str, shown: str
 ) -> None:
     assert rate(done, seconds, unit) == shown
+
+
+@pytest.mark.parametrize(
+    "done, seconds, shown",
+    [
+        (9, 10.0, "54 files/min"),
+        (84, 78 * 60.0, "1.1 files/min"),
+        (13, 6 * 3600.0, "2.2 files/h"),
+        (3, 10 * 3600.0, "0.3 files/h"),
+        (1, 400 * 3600.0, "0.0 files/h"),
+    ],
+)
+def test_a_rate_below_one_a_second_is_told_by_the_minute_and_below_one_a_minute_by_the_hour(
+    done: int, seconds: float, shown: str
+) -> None:
+    assert rate(done, seconds, "files") == shown

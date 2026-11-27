@@ -5,6 +5,7 @@ MINUTE = 60
 HOUR = 3600
 DAY = 24 * HOUR
 MILLISECONDS = 1000
+RATED_BY = ((1, "s"), (MINUTE, "min"), (HOUR, "h"))
 
 
 def size(stored: int) -> str:
@@ -34,5 +35,8 @@ def duration(seconds: float) -> str:
 
 def rate(done: int, seconds: float, unit: str) -> str:
     per_second = done / seconds if seconds > 0 else 0.0
-    number = f"{per_second:.1f}" if round(per_second, 1) < SHORT else f"{per_second:,.0f}"
-    return f"{number} {unit}/s"
+    slowest = RATED_BY[-1] if per_second else RATED_BY[0]
+    span, name = next((each for each in RATED_BY if round(per_second * each[0], 1) >= 1), slowest)
+    held = per_second * span
+    number = f"{held:.1f}" if round(held, 1) < SHORT else f"{held:,.0f}"
+    return f"{number} {unit}/{name}"
