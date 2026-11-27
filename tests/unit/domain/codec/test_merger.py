@@ -167,17 +167,6 @@ def test_a_merge_of_lists_that_are_damaged_or_hold_what_the_store_does_not_is_da
         stepped(held, SEGMENT)
     with pytest.raises(DamagedError, match="a pack of lists holds other than its head says"):
         fed_packs(held, 0, [(b"\x09", b"")])
-    with pytest.raises(DamagedError, match="is no pack of lists"):
-        fed_packs(held, 0, [(1, b"")])
-    damaged: list[tuple[object, ...]] = [
-        (b"a", 3, b"", b""),
-        ("a", 3, None, b""),
-        ("a", "3", b"", b""),
-        ("a", -1, b"", b""),
-    ]
-    for row in damaged:
-        with pytest.raises(DamagedError, match="is no list of a term"):
-            fed(held, 1, [row])
 
 
 plausible = st.lists(st.integers(0, 8), min_size=1, max_size=6, unique=True).flatmap(

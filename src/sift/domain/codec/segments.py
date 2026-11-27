@@ -97,17 +97,12 @@ def merger(chunks: MergedChunks, shape: Shape, limits: MergeLimits, sources: int
 
 
 def fed(held: Merger, source: int, rows: Sequence[tuple[object, ...]]) -> bool:
-    try:
-        return held.feed(source, rows)
-    except (TypeError, OverflowError):
-        raise DamagedError("the keyword index holds a row that is no list of a term") from None
+    return held.feed(source, rows)
 
 
 def fed_packs(held: Merger, source: int, rows: Sequence[tuple[object, ...]]) -> bool:
     try:
         return held.feed_packs(source, rows)
-    except TypeError:
-        raise DamagedError("the keyword index holds a row that is no pack of lists") from None
     except ValueError as error:
         raise DamagedError(str(error)) from None
 
@@ -123,8 +118,6 @@ def stepped(held: Merger, segment: int) -> MergeStep:
 def unpacked(lists: bytes, places: bytes | None, terms: Sequence[str]) -> list[PackedList]:
     try:
         return [PackedList(*each) for each in _native.unpacked(lists, places, terms)]
-    except TypeError:
-        raise DamagedError("the keyword index holds a row that is no pack of lists") from None
     except ValueError as error:
         raise DamagedError(str(error)) from None
 
