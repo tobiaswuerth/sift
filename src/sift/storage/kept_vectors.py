@@ -11,7 +11,7 @@ from sift.storage.texts import TextSpan, spans_text
 AT_ONCE = 1000
 KEY_BYTES = 16
 KEPT = """CREATE TEMP TABLE IF NOT EXISTS kept_vectors(
-              key BLOB PRIMARY KEY, vector BLOB NOT NULL, bits BLOB NOT NULL) WITHOUT ROWID"""
+              key BLOB PRIMARY KEY, vector BLOB NOT NULL, bits BLOB NOT NULL)"""
 HELD = """SELECT c.id, c.document, c.start, c.length, d.title,
                  c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document), v.vector, k.bits
           FROM chunks c JOIN documents d ON d.id = c.document

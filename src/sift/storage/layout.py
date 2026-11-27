@@ -108,22 +108,21 @@ LAYOUT: tuple[Migration, ...] = (
                 ranges BLOB,
                 CHECK ((postings IS NULL) = (positions IS NULL) AND (postings IS NULL) <> (ranges IS NULL)),
                 PRIMARY KEY(segment, term)
-            ) STRICT, WITHOUT ROWID""",
+            ) STRICT""",
             """CREATE TABLE keyword_blocks(
-                segment INTEGER NOT NULL,
+                segment INTEGER NOT NULL REFERENCES keyword_segments(id) ON DELETE CASCADE,
                 term TEXT NOT NULL,
                 number INTEGER NOT NULL CHECK (number >= 0),
                 postings BLOB NOT NULL,
                 positions BLOB NOT NULL,
-                PRIMARY KEY(segment, term, number),
-                FOREIGN KEY(segment, term) REFERENCES keyword_postings(segment, term) ON DELETE CASCADE
-            ) STRICT, WITHOUT ROWID""",
+                PRIMARY KEY(segment, term, number)
+            ) STRICT""",
             """CREATE TABLE keyword_lengths(
                 segment INTEGER NOT NULL REFERENCES keyword_segments(id) ON DELETE CASCADE,
                 block INTEGER NOT NULL,
                 lengths BLOB NOT NULL,
                 PRIMARY KEY(segment, block)
-            ) STRICT, WITHOUT ROWID""",
+            ) STRICT""",
             """CREATE TABLE keyword_terms(
                 term TEXT PRIMARY KEY,
                 chunks INTEGER NOT NULL CHECK (chunks > 0)
