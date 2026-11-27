@@ -31,10 +31,6 @@ def _newlines(held: str) -> tuple[str, str]:
     return held[: len(held) - len(kept)].replace(WINDOWS_NEWLINE, NEWLINE), kept
 
 
-def _as_ansi(text: str) -> str:
-    return ansi(text) if ESCAPED.search(text) else text
-
-
 def text_pieces(raw: Iterable[bytes]) -> Iterator[str]:
     parts = iter(raw)
     start = b""
@@ -46,10 +42,10 @@ def text_pieces(raw: Iterable[bytes]) -> Iterator[str]:
     decoder = codecs.getincrementaldecoder(encoding)(errors)
     held = ""
     for part in itertools.chain((start,), parts):
-        piece, held = _newlines(held + _as_ansi(decoder.decode(part)))
+        piece, held = _newlines(held + ansi(decoder.decode(part)))
         if piece:
             yield piece
-    last = (held + _as_ansi(decoder.decode(b"", final=True))).replace(WINDOWS_NEWLINE, NEWLINE)
+    last = (held + ansi(decoder.decode(b"", final=True))).replace(WINDOWS_NEWLINE, NEWLINE)
     if last:
         yield last
 
@@ -63,7 +59,7 @@ def encoding_of(start: bytes) -> tuple[str, str]:
 
 
 def ansi(text: str) -> str:
-    return text.translate(ANSI)
+    return text.translate(ANSI) if ESCAPED.search(text) else text
 
 
 def encodable(text: str) -> bool:

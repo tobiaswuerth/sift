@@ -1,4 +1,5 @@
 import json
+import unicodedata
 
 import pytest
 
@@ -140,3 +141,31 @@ def test_a_record_s_digest_is_its_line_s() -> None:
     one, other = read({"id": 1, "text": "a"}), read({"id": 1, "text": "b"})
     assert one.digest != other.digest
     assert read({"id": 1, "text": "a"}).digest == one.digest
+
+
+FIELDS = {
+    "id": "a",
+    "title": "T",
+    "abstract": "Z\u00fcrich body",
+    "tags": ["x", "na\u00efve"],
+    "n": {"k": [1, "z\u00fc"]},
+}
+
+
+def test_a_line_composed_already_gives_the_record_its_escaped_or_decomposed_line_gives() -> None:
+    escaped, written = json.dumps(FIELDS), json.dumps(FIELDS, ensure_ascii=False)
+    decomposed = unicodedata.normalize("NFD", written)
+    assert "\\u" in escaped
+    assert written != decomposed
+    first, second, third = (record_of(line, 1, NO_CHOICE) for line in (written, escaped, decomposed))
+    assert isinstance(first, Document)
+    assert isinstance(second, Document)
+    assert isinstance(third, Document)
+    assert (
+        first.fields
+        == second.fields
+        == third.fields
+        == {"id": "a", "title": "T", "tags": FIELDS["tags"], "n": FIELDS["n"]}
+    )
+    assert (first.key, first.title, first.chunks) == (second.key, second.title, second.chunks)
+    assert first.text == second.text == "# T\n\nZ\u00fcrich body"

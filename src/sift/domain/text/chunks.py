@@ -7,6 +7,7 @@ from sift.domain.text.markdown import HEADING, TextLine, text_lines, with_prose
 
 MOST_CHARACTERS = 3000
 MOST_OVERLAP = 300
+HEADING_MARK = "#"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,5 +88,16 @@ def chunked(lines: Iterable[tuple[TextLine, bool]]) -> Iterator[Chunk]:
             yield found
 
 
+def _one(text: str, first_line: int, offset: int) -> tuple[Chunk, ...]:
+    stripped = text.strip()
+    if not stripped:
+        return ()
+    lead = len(text) - len(text.lstrip())
+    first = first_line + text.count("\n", 0, lead)
+    return (Chunk(first, first + stripped.count("\n"), offset + lead, len(stripped)),)
+
+
 def chunks(text: str, first_line: int = 1, offset: int = 0) -> tuple[Chunk, ...]:
+    if len(text) <= MOST_CHARACTERS and text.find(HEADING_MARK, MOST_CHARACTERS // 2) < 0:
+        return _one(text, first_line, offset)
     return tuple(chunked(with_prose(text_lines((text,), first_line, offset))))

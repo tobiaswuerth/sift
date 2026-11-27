@@ -22,6 +22,7 @@ from sift.storage.replacing import documents_replaced
 from sift.storage.taken import keyed, nothing_taken, take, untaken
 
 SHOWN = 5
+DESCRIBED_WITHIN = 16
 
 type Line = tuple[int, Document | SkippedLine]
 
@@ -53,7 +54,8 @@ def _records(lines: Iterable[tuple[int, str | SkippedLine]], chosen: Chosen, mos
         if isinstance(line, SkippedLine):
             yield number, line
         elif line:
-            yield number, _described(record_of(line, number, chosen), number, most)
+            found = record_of(line, number, chosen)
+            yield number, found if DESCRIBED_WITHIN * len(line) <= most else _described(found, number, most)
 
 
 def _characters(line: Line) -> int:

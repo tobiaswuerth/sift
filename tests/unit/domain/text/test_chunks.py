@@ -176,3 +176,26 @@ def test_a_heading_starts_a_chunk_only_past_half_the_most_characters() -> None:
 def test_a_line_whose_only_space_starts_it_is_cut_after_that_space() -> None:
     line = " " + "x" * MOST_CHARACTERS
     assert list(cuts(line)) == [(0, 1), (1, MOST_CHARACTERS + 1)]
+
+
+def worded(size: int) -> str:
+    return "word " * size
+
+
+short_lines = st.lists(
+    st.one_of(
+        st.text(st.sampled_from("ab #\t"), max_size=60),
+        st.integers(0, 400).map(worded),
+        st.sampled_from(["# Heading", "   ## Deeper", "```", "~~~", ""]),
+    ),
+    max_size=30,
+)
+
+
+@given(short_lines, st.sampled_from(["\n", "\n\n"]), st.integers(1, 50), st.integers(0, 500))
+def test_a_text_no_longer_than_a_chunk_is_cut_as_any_text_is(
+    lines: list[str], between: str, first_line: int, offset: int
+) -> None:
+    text = between.join(lines)[:MOST_CHARACTERS]
+    as_any = tuple(chunked(with_prose(text_lines((text,), first_line, offset))))
+    assert chunks(text, first_line, offset) == as_any

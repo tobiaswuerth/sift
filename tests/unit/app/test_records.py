@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+from hypothesis import example, given
+from hypothesis import strategies as st
 
 from sift.api.collections import AddCollection, Counted, ShowStatus
 from sift.api.embedding import EmbedCollections
@@ -17,10 +19,12 @@ from sift.app.documents import documents
 from sift.app.embedding import embed
 from sift.app.filing import LIMITS, Limits, Lines, Readers
 from sift.app.indexing import index
+from sift.app.records import DESCRIBED_WITHIN
 from sift.app.search import search
 from sift.domain.plan.segments import POLICY, Held, merges
 from sift.domain.text.documents import Outcome
-from sift.domain.text.records import GIVE_IDS, SkippedLine
+from sift.domain.text.notes import Document
+from sift.domain.text.records import GIVE_IDS, NO_CHOICE, SkippedLine, record_of
 from sift.ingest.files import Identity
 from sift.ingest.readers import ToRead
 from sift.ingest.records import lines_of
@@ -28,7 +32,7 @@ from sift.ingest.sandbox import FileReading, OpenReading
 from sift.interfaces.cli.written import written
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading, rows
-from sift.storage.documents import counts
+from sift.storage.documents import counts, description_bytes
 from sift.storage.store import open_store
 from sift.storage.vector_meta import left
 from tests.files import TORN, jsonl, torn_lines, write
@@ -321,3 +325,35 @@ def test_the_passages_of_a_large_file_of_records_are_merged_twice_at_most_on_the
             rewritten += joined
             held[planned[0].start : planned[0].stop] = [Held(joined, 0)]
     assert ([each.chunks for each in held], rewritten) == ([POLICY.most], 2 * POLICY.most)
+
+
+type Json = bool | int | float | str | list[Json] | dict[str, Json] | None
+
+
+def nested(inner: st.SearchStrategy[Json]) -> st.SearchStrategy[Json]:
+    return st.one_of(st.lists(inner, max_size=4), st.dictionaries(st.text(max_size=8), inner, max_size=4))
+
+
+def written_line(*, fields: dict[str, Json], text: str, escaped: bool) -> str:
+    return json.dumps({**fields, "text": text}, ensure_ascii=escaped, separators=(",", ":"))
+
+
+flat: st.SearchStrategy[Json] = st.one_of(
+    st.none(), st.booleans(), st.integers(), st.floats(allow_nan=False, allow_infinity=False), st.text(max_size=20)
+)
+record_lines = st.builds(
+    written_line,
+    fields=st.dictionaries(st.text(max_size=8), st.recursive(flat, nested, max_leaves=12), max_size=6),
+    text=st.text(min_size=1, max_size=40),
+    escaped=st.booleans(),
+)
+
+
+@given(record_lines)
+@example('{"a":[1e15,1e15,1e15,1e15,1e15,1e15,1e15,1e15],"text":"t"}')
+@example('{"id":"' + "\N{MATHEMATICAL FRAKTUR CAPITAL U}" * 40 + '","text":"t"}')
+@example('{"k":"' + "\N{DEVANAGARI LETTER QA}" * 40 + '","text":"t"}')
+def test_what_a_record_s_name_title_and_fields_take_is_bounded_by_its_line(line: str) -> None:
+    found = record_of(line, 1, NO_CHOICE)
+    if isinstance(found, Document):
+        assert description_bytes(found) <= DESCRIBED_WITHIN * len(line)

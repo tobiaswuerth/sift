@@ -1,3 +1,4 @@
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -14,6 +15,7 @@ TITLE_FIELDS = ("title", "name", "headline", "subject")
 TEXT_FIELDS = ("text", "content", "body", "abstract", "description", "summary")
 NOT_A_KEY = "its id is no text or whole number"
 GIVE_IDS = "give every record an id or none"
+ESCAPE = "\\u"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +97,12 @@ def record(found: Mapping[str, FieldValue], line: int, chosen: Chosen) -> Docume
         return SkippedLine(line, "no text")
     title = title_of(as_text(found.get(title_field))) if title_field else ""
     text = storable(f"# {title}\n\n{body}" if title else body)
-    fields = composed_fields({name: value for name, value in found.items() if name not in text_fields})
+    fields = {name: value for name, value in found.items() if name not in text_fields}
     return Document(storable(named), "", storable(title or heading(body) or named), fields, text, chunks(text), ())
+
+
+def _composed_already(line: str) -> bool:
+    return ESCAPE not in line and (line.isascii() or unicodedata.is_normalized("NFC", line))
 
 
 def record_of(line: str, number: int, chosen: Chosen) -> Document | SkippedLine:
@@ -111,4 +117,5 @@ def record_of(line: str, number: int, chosen: Chosen) -> Document | SkippedLine:
     found = record(value, number, chosen)
     if isinstance(found, SkippedLine):
         return found
-    return Document(found.key, digest(line.encode()), found.title, found.fields, found.text, found.chunks, ())
+    fields = found.fields if _composed_already(line) else composed_fields(found.fields)
+    return Document(found.key, digest(line.encode()), found.title, fields, found.text, found.chunks, ())

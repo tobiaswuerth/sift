@@ -5,7 +5,7 @@ import itertools
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from sift.domain.text.decoding import decoded, encodable, encoding_of, text_pieces
+from sift.domain.text.decoding import ansi, decoded, encodable, encoding_of, text_pieces
 
 MARKS_OF_OTHER_ENCODINGS = (b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")
 BYTE_ORDER_MARK = "\N{ZERO WIDTH NO-BREAK SPACE}"
@@ -76,3 +76,11 @@ def test_the_encoding_of_a_file_read_line_by_line_is_told_by_its_first_bytes() -
 @given(st.text(st.characters(codec=None), max_size=40))
 def test_a_text_is_encodable_where_utf8_takes_it(text: str) -> None:
     assert encodable(text) == (text.encode(errors="replace").decode() == text)
+
+
+def test_text_that_holds_no_byte_escaped_is_handed_back_as_it_is_and_an_escaped_byte_is_read_as_windows_reads_it() -> (
+    None
+):
+    plain = "Z\u00fcrich \N{EURO SIGN}"
+    assert ansi(plain) is plain
+    assert ansi("a\udce9b\udc80") == "a\u00e9b\N{EURO SIGN}"
