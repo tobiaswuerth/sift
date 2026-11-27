@@ -1,7 +1,7 @@
 import tarfile
 import tomllib
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from tools.findings import read, tracked
@@ -10,6 +10,10 @@ PACKAGE = "src/"
 SOURCES = ("src/sift", "native", "rust-toolchain.toml")
 EXTENSIONS = frozenset({"sift/_native.abi3.so", "sift/_native.pyd"})
 PROJECT_FILES = frozenset({"pyproject.toml", "pyproject.toml.orig", "README.md", "LICENSE", "PKG-INFO"})
+NOTICES = "licenses/native/THIRD-PARTY-NOTICES"
+UNNOTICED = (
+    "the wheel lacks the notices of the crates built into it: {name}, which pyproject.toml names under license-files"
+)
 
 
 def project_version(pyproject: str) -> str:
@@ -31,9 +35,10 @@ def _extension(built: list[str]) -> list[str]:
     ]
 
 
-def problems(wheel: Iterable[str], sdist: Iterable[str], tracked: Iterable[str], version: str, said: str) -> list[str]:
+def problems(wheel: Sequence[str], sdist: Iterable[str], tracked: Iterable[str], version: str, said: str) -> list[str]:
     sources = frozenset(tracked)
     metadata, root = f"sift_rag-{version}.dist-info/", f"sift_rag-{version}/"
+    described = [name for name in wheel if name.startswith(metadata)]
     held = sorted(name for name in wheel if not name.startswith(metadata))
     packaged = [name for name in held if name not in EXTENSIONS]
     package = {name for name in sources if name.startswith(PACKAGE)}
@@ -46,6 +51,7 @@ def problems(wheel: Iterable[str], sdist: Iterable[str], tracked: Iterable[str],
         ),
         *(f"the wheel lacks {name}" for name in sorted(package - {PACKAGE + name for name in packaged})),
         *_extension([name for name in held if name in EXTENSIONS]),
+        *([] if metadata + NOTICES in described else [UNNOTICED.format(name=metadata + NOTICES)]),
         *(
             f"the sdist holds {name}, no tracked source or project file"
             for name in sorted(shipped - sources - PROJECT_FILES)

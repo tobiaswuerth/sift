@@ -16,6 +16,7 @@ from tools import (
     floors,
     fts5_table,
     limits,
+    notices,
     release,
 )
 
@@ -29,6 +30,7 @@ CHECKS = MappingProxyType(
         "imports": check_imports.main,
         "limits": limits.main,
         "names": check_names.main,
+        "notices": notices.main,
         "package": check_package.main,
         "prose": check_prose.main,
         "release": release.main,

@@ -15,6 +15,8 @@ WHEEL = (
     "sift/_native.abi3.so",
     "sift_rag-2.0.dist-info/METADATA",
     "sift_rag-2.0.dist-info/RECORD",
+    "sift_rag-2.0.dist-info/licenses/LICENSE",
+    "sift_rag-2.0.dist-info/licenses/native/THIRD-PARTY-NOTICES",
 )
 SDIST = (
     "sift_rag-2.0/PKG-INFO",
@@ -40,6 +42,12 @@ def test_a_version_that_is_no_string_is_refused() -> None:
 
 def test_a_package_of_the_tracked_sources_that_says_its_version_passes() -> None:
     assert problems(WHEEL, SDIST, TRACKED, "2.0", "sift 2.0") == []
+
+
+def test_a_wheel_without_the_notices_of_the_crates_built_into_it_is_found() -> None:
+    lacking = "the wheel lacks the notices of the crates built into it: sift_rag-2.0.dist-info/licenses/native/"
+    named = "THIRD-PARTY-NOTICES, which pyproject.toml names under license-files"
+    assert problems(WHEEL[:-1], SDIST, TRACKED, "2.0", "sift 2.0") == [lacking + named]
 
 
 def test_a_wheel_holds_the_tracked_sources_of_the_package_and_nothing_else() -> None:
@@ -85,6 +93,7 @@ def built(folder: Path, version: str, extra: str | None = None) -> Path:
         for name in (*(each for each in sources if each.startswith("src/")), "src/sift/_native.abi3.so"):
             wheel.writestr(name.removeprefix("src/"), "")
         wheel.writestr(f"sift_rag-{version}.dist-info/METADATA", "")
+        wheel.writestr(f"sift_rag-{version}.dist-info/licenses/native/THIRD-PARTY-NOTICES", "")
     with tarfile.open(folder / f"sift_rag-{version}.tar.gz", "w:gz") as sdist:
         folder_entry = tarfile.TarInfo(f"sift_rag-{version}/src")
         folder_entry.type = tarfile.DIRTYPE

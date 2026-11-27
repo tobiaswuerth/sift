@@ -64,6 +64,7 @@ def lint(session: nox.Session) -> None:
     session.run("cargo", "fmt", f"--manifest-path={CRATE}", "--check", external=True)
     for built in ("--features=python", "--tests"):
         session.run("cargo", "clippy", f"--manifest-path={CRATE}", "--locked", "--release", built, external=True)
+    session.run("python", "-m", "tools", "notices")
     session.run("lint-imports")
     session.run("python", "-m", "tools", "imports")
     session.run("python", "-m", "tools", "stubs")

@@ -18,7 +18,8 @@ need its new keys; ids of JSON Lines records and mail attachments are written an
 - The keyword index is built and merged by a compiled extension, written in Rust. PyPI holds it built for Linux on
   x86-64 and ARM (glibc 2.28 or newer), macOS on Apple silicon and Windows on x86-64, one wheel each for every
   CPython from 3.12 on. Anywhere else, and on the free-threaded builds, pip builds it from the sources, which needs
-  Rust 1.100 or newer and a C compiler.
+  Rust 1.100 or newer and a C compiler. The licences of the Rust crates built into it are in each package, beside
+  sift's own.
 - Each collection's store has a new layout; the catalog is `catalog.sqlite` in place of `sift.db`. A store's layout
   changes from now on by numbered migrations, which the first command of a newer sift runs once. Each store
   records which older sifts may still read it and which may write it: an older sift opens a store a newer one

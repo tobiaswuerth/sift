@@ -31,3 +31,10 @@ def test_the_crate_s_coverage_is_refused_when_the_report_holds_nothing_of_the_bi
     noxfile = (ROOT / "noxfile.py").read_text(encoding="utf-8")
     assert 'bound = [Path("python.rs"), *sorted(Path("python", each.name) for each in BINDING.glob("*.rs"))]' in noxfile
     assert "session.error(NO_BINDING.format(" in noxfile
+
+
+def test_the_notices_of_the_crates_go_into_every_package_and_the_gate_holds_them_current() -> None:
+    assert within(table("pyproject.toml"), "project", "license-files") == ["LICENSE", "native/THIRD-PARTY-NOTICES"]
+    assert within(table("pyproject.toml"), "project", "license") == "MIT"
+    noxfile = (ROOT / "noxfile.py").read_text(encoding="utf-8")
+    assert '    session.run("python", "-m", "tools", "notices")\n' in noxfile

@@ -14,7 +14,9 @@ uv run pre-commit install
 
 The lists of the keyword index are built and merged by a Rust extension, the crate in `native/`. Install
 [rustup](https://rustup.rs) and a C compiler first: `uv sync` builds the extension, and builds it again whenever the
-crate changed. `rust-toolchain.toml` names the toolchain, which rustup fetches on the first build.
+crate changed. `rust-toolchain.toml` names the toolchain, which rustup fetches on the first build. Every package
+carries the licences of the crates built into the extension, in `native/THIRD-PARTY-NOTICES`: after a change of
+the crate's dependencies, `python -m tools notices --write` writes that file anew.
 
 ## The gate
 
@@ -23,8 +25,8 @@ uv run --only-group gate nox
 ```
 
 It runs every check a change must pass and stops at the first that fails: `lint`
-(pre-commit hooks, `cargo fmt` and clippy on the crate, and import contracts; it refuses files git neither tracks
-nor ignores), `types` (basedpyright for
+(pre-commit hooks, `cargo fmt` and clippy on the crate, the licence notices of its crates, and import contracts; it
+refuses files git neither tracks nor ignores), `types` (basedpyright for
 Linux, macOS and Windows, each as Python 3.12 and 3.15), `tests-3.12` and `tests-3.15` (100% line and branch
 coverage of `sift` and `tools`), `lowest` (the lowest versions sift allows, installed afresh on each run, and
 `python -m tools floors` holds each to the version `pyproject.toml` names), `kernel` (the crate's own tests and the

@@ -16,17 +16,14 @@ class Finding:
     problem: str
 
 
+def said(*command: str, top: Path = ROOT) -> str:
+    done = subprocess.run(command, cwd=top, check=True, capture_output=True, text=True, encoding="utf-8", timeout=600)
+    return done.stdout
+
+
 def tracked(roots: Iterable[str], top: Path = ROOT) -> list[str]:
-    listed = subprocess.run(
-        ["git", "ls-files", "-z", "--cached", "--", *roots],
-        cwd=top,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=60,
-    )
-    return sorted(name for name in listed.stdout.split("\0") if name)
+    listed = said("git", "ls-files", "-z", "--cached", "--", *roots, top=top)
+    return sorted(name for name in listed.split(chr(0)) if name)
 
 
 def files(roots: Iterable[str], suffixes: tuple[str, ...], top: Path = ROOT) -> list[str]:
