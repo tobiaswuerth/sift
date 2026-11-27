@@ -16,11 +16,12 @@ COMMENT = re.compile(r"//|/\*")
 BINDING = f"{CRATE}/python.rs"
 ALLOCATOR = "#[global_allocator]"
 NO_ALLOCATOR = "the extension names no allocator of its own: its threads would wait for the system's"
+UNKEYED = re.compile(r"\b(?:BuildHasherDefault|DefaultHasher)\b")
 REMEDY = (
     "Split a module that grew too long by responsibility, give each type of the crate a name of its own, let a "
     f"module use only the layers below it ({' < '.join(LAYERS)}; name a new module's place in LAYERS of "
-    f"tools/check_crate.py), say what a comment says with a name, a type or a test, and keep the {ALLOCATOR} that "
-    f"{BINDING} names."
+    f"tools/check_crate.py), say what a comment says with a name, a type or a test, keep the {ALLOCATOR} that "
+    f"{BINDING} names, and hash what texts bring with a key (RandomState)."
 )
 
 
@@ -69,6 +70,13 @@ def commented(path: str, source: str) -> Iterator[Finding]:
             yield Finding(path, number, "holds a comment")
 
 
+def unkeyed(path: str, source: str) -> Iterator[Finding]:
+    code = TEXT.sub(lambda text: "\n" * text.group().count("\n"), source)
+    for found in UNKEYED.finditer(code):
+        problem = f"{found.group()} hashes without a key: a text could choose words that collide"
+        yield Finding(path, _line(code, found.start()), problem)
+
+
 def unallocated(path: str, source: str) -> Iterator[Finding]:
     if path == BINDING and ALLOCATOR not in TEXT.sub("", source):
         yield Finding(path, 1, NO_ALLOCATOR)
@@ -78,7 +86,7 @@ def crate(sources: Mapping[str, str]) -> list[Finding]:
     each = [
         finding
         for path, source in sources.items()
-        for check in (too_long, climbing, commented, unallocated)
+        for check in (too_long, climbing, commented, unkeyed, unallocated)
         for finding in check(path, source)
     ]
     return sorted([*each, *renamed(sources)], key=lambda finding: (finding.path, finding.line))

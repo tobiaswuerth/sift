@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasher, RandomState};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{PoisonError, RwLock};
 
@@ -11,8 +11,6 @@ const APART: u32 = 0x20;
 const DROPPED: u32 = u32::MAX;
 const SHARDS: usize = 64;
 const SHARDS_WIDE: u64 = 64;
-const BASIS: u64 = 0xcbf2_9ce4_8422_2325;
-const PRIME: u64 = 0x0100_0000_01b3;
 
 pub struct Table {
     held: Vec<u32>,
@@ -54,30 +52,11 @@ impl Table {
     }
 }
 
-pub struct Fnv(u64);
-
-impl Default for Fnv {
-    fn default() -> Self {
-        Self(BASIS)
-    }
-}
-
-impl Hasher for Fnv {
-    fn write(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(PRIME);
-        }
-    }
-
-    fn finish(&self) -> u64 {
-        self.0
-    }
-}
-
-type Codes<C> = HashMap<Box<str>, C, BuildHasherDefault<Fnv>>;
+type Codes<C> = HashMap<Box<str>, C, RandomState>;
 
 pub struct Terms {
     shards: Vec<RwLock<Codes<usize>>>,
+    apart: RandomState,
     held: AtomicUsize,
 }
 
@@ -90,6 +69,7 @@ impl Default for Terms {
     fn default() -> Self {
         Self {
             shards: (0..SHARDS).map(|_| RwLock::default()).collect(),
+            apart: RandomState::new(),
             held: AtomicUsize::new(0),
         }
     }
@@ -97,9 +77,7 @@ impl Default for Terms {
 
 impl Terms {
     fn shard(&self, word: &str) -> &RwLock<Codes<usize>> {
-        let mut hashed = Fnv::default();
-        hashed.write(word.as_bytes());
-        &self.shards[usize::try_from(hashed.finish() % SHARDS_WIDE).unwrap_or(0)]
+        &self.shards[usize::try_from(self.apart.hash_one(word) % SHARDS_WIDE).unwrap_or(0)]
     }
 
     pub fn code(&self, word: &str) -> Result<u32, String> {

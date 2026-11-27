@@ -71,3 +71,12 @@ def test_a_binding_that_names_no_allocator_of_its_own_is_found() -> None:
 def test_the_crate_keeps_its_shape(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([]) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_a_hasher_without_a_key_is_found_where_it_is_named() -> None:
+    named = "use std::hash::{BuildHasherDefault, RandomState};\n"
+    source = named + 'const A: &str = "DefaultHasher";\nfn f() { DefaultHasher::new(); }\n'
+    assert problems({"native/src/words.rs": source}) == [
+        ("native/src/words.rs", 1, "BuildHasherDefault hashes without a key: a text could choose words that collide"),
+        ("native/src/words.rs", 3, "DefaultHasher hashes without a key: a text could choose words that collide"),
+    ]
