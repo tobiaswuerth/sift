@@ -167,14 +167,13 @@ class Answering(http.server.BaseHTTPRequestHandler):
         if self.path == "/cut":
             self.close_connection = True
             return
-        found = self.path in {"/held?as=asked", "/undated"}
+        written = {"/held?as=asked": "Tue, 03 Nov 2026 14:16:33 GMT", "/undated": "yesterday"}.get(self.path)
+        found = written is not None or self.path == "/unwritten"
         body = b"held" * (1 if found else 1 << 19)
         self.send_response(200 if found or self.path == "/long" else 404)
         self.send_header("Content-Length", str(len(body)))
-        if found:
-            self.send_header(
-                "Last-Modified", "yesterday" if self.path == "/undated" else "Tue, 03 Nov 2026 14:16:33 GMT"
-            )
+        if written is not None:
+            self.send_header("Last-Modified", written)
         self.end_headers()
         self.wfile.write(body)
 
@@ -200,6 +199,7 @@ def test_an_address_is_fetched_with_when_it_was_written_and_a_refusal_or_too_lon
     served: str,
 ) -> None:
     assert fetched(f"{served}/held?as=asked") == Answer(b"held", 1793715393.0)
+    assert fetched(f"{served}/unwritten") == Answer(b"held", None)
     with pytest.raises(PinError, match="answered 404"):
         fetched(f"{served}/missing")
     with pytest.raises(PinError, match="1,048,577 bytes"):
