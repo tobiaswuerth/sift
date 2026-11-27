@@ -59,8 +59,12 @@ need its new keys; ids of JSON Lines records and mail attachments are written an
 - `SIFT_UPDATE_CHECK` is off by default. Turned on, a command run in a terminal says when a newer sift is out and which
   command updates it; sift never updates itself.
 - `sift worker` takes at most 256 texts a request; both machines need sift 2.
-- `sift embed` reads 1,024 passages, embeds them and writes them in turn, where sift 1.15 read and wrote on threads
-  of their own: on a GPU shared with another job it embedded 15% fewer passages a second.
+- `sift embed` on an NVIDIA GPU compiles the embedding model first when 20,000 passages or more wait: 20 to 60 s once
+  a process, shown as its own step, and then twice as many passages a second as sift 1.15 embedded (1,180 against 590
+  of PubMed's abstracts on one GPU). Fewer passages, queries and other devices use the model as it is. On Windows
+  sift depends on `triton-windows` for it; PyTorch brings Triton on Linux.
+- `sift embed` reads 16,384 passages at a time, embeds them longest first and writes their vectors at once, the
+  next batch's words cut while the model runs on the one before.
 
 ### Removed
 

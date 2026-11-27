@@ -63,6 +63,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.domain.text.records` | `MOST_RECORD_CHARACTERS` | `64 << 20` |
 | `sift.domain.text.tokens` | `MOST_FIELD_CHARACTERS` | `1 << 20` |
 | `sift.inference.accelerator` | `LEAST_BUDGET` | `2 * GIB` |
+| `sift.inference.batches` | `WAITED_SECONDS` | `600.0` |
 | `sift.inference.hub` | `STAMP_BYTES` | `8` |
 | `sift.inference.local` | `MOST_TOKENS` | `1024` |
 | `sift.inference.local` | `IDLE_SECONDS` | `300.0` |

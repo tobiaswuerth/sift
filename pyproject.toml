@@ -28,6 +28,9 @@ dependencies = [
     "uvicorn>=0.31",  # see above
     "starlette>=1.3.1",  # the home process's HTTP API; older releases have advisories known against them
     "cryptography>=50.0.2",  # the certificate sift worker makes for HTTPS; the version sift was first built on
+    # Compiles the embedding model for an NVIDIA GPU before many passages are embedded (torch.compile), which embeds
+    # them twice as fast. PyTorch's builds for Linux bring Triton; those for Windows do not. The first build for 3.9.
+    "triton-windows>=3.9.0.post30; sys_platform == 'win32'",  # see above
 ]
 keywords = [
     "rag",

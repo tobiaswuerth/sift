@@ -141,9 +141,15 @@ def _reason(error: BaseException) -> str:
     return (error.strerror if isinstance(error, OSError) else None) or str(error) or type(error).__name__
 
 
-def _unfit(worker: WorkerAddress, answered: str) -> ModelUnavailableError:
+class OtherModelError(ModelUnavailableError):
+    pass
+
+
+def _unfit(
+    worker: WorkerAddress, answered: str, kind: type[ModelUnavailableError] = ModelUnavailableError
+) -> ModelUnavailableError:
     told = f"embedding remote {worker.address} answered {answered}: not what this sift asked it for"
-    return ModelUnavailableError(told, SAME_SIFT)
+    return kind(told, SAME_SIFT)
 
 
 def _same_sift(worker: WorkerAddress, release: str, said: dict[str, object]) -> None:
@@ -202,9 +208,9 @@ def _sent(
 
 def _other_model(worker: WorkerAddress, before: str, now: str | None) -> ModelUnavailableError:
     if now is None:
-        return _unfit(worker, "vectors without the name of their model")
+        return _unfit(worker, "vectors without the name of their model", OtherModelError)
     told = f"embedding remote {worker.address} embeds with {unquote(now)} now, not with {before} as before"
-    return ModelUnavailableError(told, AGAIN_REMEDY)
+    return OtherModelError(told, AGAIN_REMEDY)
 
 
 def _unreachable(worker: WorkerAddress, error: BaseException) -> ModelUnavailableError:
@@ -259,6 +265,13 @@ class WorkerLine:
         return connection
 
 
+def _embedded(line: WorkerLine, said: WorkerSays, part: Sequence[str], *, query: bool) -> Halves:
+    answer = line.asked(EMBED, {"texts": list(part), "query": query})
+    if answer.model != quote(said.model, safe=""):
+        raise _other_model(line.worker, said.model, answer.model)
+    return _vectors_in(line.worker, answer.data, len(part), said.width)
+
+
 @dataclass(slots=True, eq=False)
 class Remote:
     worker: WorkerAddress
@@ -278,6 +291,9 @@ class Remote:
         self._said()
         return ModelsPrepared((), built=False)
 
+    def prepare_many(self) -> ModelsPrepared:
+        return self.prepare()
+
     def prepare_ranker(self) -> ModelsPrepared:
         return self.prepare()
 
@@ -289,10 +305,14 @@ class Remote:
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         said = self._said()
-        parts = [
-            self._embedded(said, part, query=query)
-            for part in (texts[at : at + MOST_TEXTS] for at in range(0, len(texts), MOST_TEXTS))
-        ]
+        try:
+            parts = [
+                _embedded(self.line, said, part, query=query)
+                for part in (texts[at : at + MOST_TEXTS] for at in range(0, len(texts), MOST_TEXTS))
+            ]
+        except OtherModelError:
+            self.said = None
+            raise
         return np.concatenate(parts) if parts else np.empty((0, said.width), np.float16)
 
     def rerank(self, query: str, texts: Sequence[str]) -> Floats:
@@ -301,13 +321,6 @@ class Remote:
             for part in (texts[at : at + MOST_TEXTS] for at in range(0, len(texts), MOST_TEXTS))
         ]
         return np.concatenate(parts) if parts else np.empty(0, np.float32)
-
-    def _embedded(self, said: WorkerSays, part: Sequence[str], *, query: bool) -> Halves:
-        answer = self.line.asked(EMBED, {"texts": list(part), "query": query})
-        if answer.model != quote(said.model, safe=""):
-            self.said = None
-            raise _other_model(self.worker, said.model, answer.model)
-        return _vectors_in(self.worker, answer.data, len(part), said.width)
 
     def _said(self) -> WorkerSays:
         if self.said is None:

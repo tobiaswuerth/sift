@@ -33,6 +33,7 @@ class Hashed:
     width: int = 48
     asked: list[tuple[tuple[str, ...], bool]] = field(default_factory=list[tuple[tuple[str, ...], bool]])
     prepared: list[bool] = field(default_factory=list[bool])
+    compiled: list[bool] = field(default_factory=list[bool])
     ranker_prepared: list[bool] = field(default_factory=list[bool])
     reranked: list[tuple[str, tuple[str, ...]]] = field(default_factory=list[tuple[str, tuple[str, ...]]])
     scored: bool = False
@@ -41,6 +42,10 @@ class Hashed:
         built = not self.prepared
         self.prepared.append(True)
         return ModelsPrepared((), built=built)
+
+    def prepare_many(self) -> ModelsPrepared:
+        self.compiled.append(True)
+        return ModelsPrepared(("compiled",), built=len(self.compiled) == 1)
 
     def prepare_ranker(self) -> ModelsPrepared:
         built = not self.ranker_prepared

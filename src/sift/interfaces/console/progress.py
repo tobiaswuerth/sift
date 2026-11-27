@@ -29,6 +29,7 @@ UNITS = MappingProxyType(
         Phase.MERGE: PASSAGES,
         Phase.EMBED: PASSAGES,
         Phase.LOAD: ("model", "models"),
+        Phase.COMPILE: ("model", "models"),
         Phase.ORDER: PASSAGES,
         Phase.COPY: ("MB", "MB"),
         Phase.TITLE: ("note", "notes"),
@@ -39,7 +40,7 @@ UNITS = MappingProxyType(
 RATED = frozenset(
     {Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED, Phase.COPY, Phase.TITLE, Phase.MEASURE, Phase.CARRY}
 )
-QUIET_WHEN_NONE = frozenset({Phase.LOAD})
+QUIET_WHEN_NONE = frozenset({Phase.LOAD, Phase.COMPILE})
 SHORTEST_RATED = 0.05
 INDENT = "  "
 LABEL = 6

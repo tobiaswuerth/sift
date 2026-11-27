@@ -58,7 +58,7 @@ def chunks(home: Path, name: str = "notes") -> int:
 
 def test_every_chunk_is_embedded_once_with_its_progress(home: Path) -> None:
     said: list[Event] = []
-    result = embed(home, EmbedCollections(), said.append, Hashed(), Embedding(chunks_a_write=2))
+    result = embed(home, EmbedCollections(), said.append, Hashed(), Embedding(chunks_a_call=2))
     total = chunks(home)
     assert result.collections == (CollectionEmbedded("notes", Embedded(total, 0)),)
     assert said[1:4] == [PhaseStarted(Phase.LOAD, None), PhaseDone(1), PhaseStarted(Phase.EMBED, total)]
@@ -68,6 +68,46 @@ def test_every_chunk_is_embedded_once_with_its_progress(home: Path) -> None:
     again: list[Event] = []
     assert embed(home, EmbedCollections(), again.append, Hashed()).collections[0].outcome == Embedded(0, 0)
     assert not [event for event in again if isinstance(event, PhaseStarted)]
+
+
+def sized_notes(tmp_path: Path) -> Path:
+    for n in range(12):
+        write(tmp_path / "notes" / f"n{n:02}.md", f"# N{n}\n\n" + "word " * (5 + 37 * n % 11 * 9))
+    return indexed_home(tmp_path, tmp_path / "notes")
+
+
+def test_passages_read_together_are_embedded_longest_first_a_call_at_a_time(tmp_path: Path) -> None:
+    home, models, said = sized_notes(tmp_path), Hashed(), list[Event]()
+    embed(home, EmbedCollections(), said.append, models, Embedding(chunks_a_call=2, chunks_a_read=8))
+    told = [[len(text.split()) for text in texts] for texts, _ in models.asked]
+    assert told == [[88, 79], [61, 52], [43, 25], [16, 7], [97, 70], [34, 7]]
+    assert [event.done for event in said if isinstance(event, Advanced)] == [2, 4, 6, 8, 10, 12]
+    assert counted(store(home), "SELECT count(*) FROM vectors") == 12
+
+
+def test_an_embedding_cut_short_keeps_the_reads_before_it_and_is_finished_by_embedding_again(
+    tmp_path: Path,
+) -> None:
+    home, sizes = sized_notes(tmp_path), Embedding(chunks_a_call=2, chunks_a_read=4)
+    with pytest.raises(KeyboardInterrupt):
+        embed(home, EmbedCollections(), quiet, Stopping(Hashed(), 3), sizes)
+    assert counted(store(home), "SELECT count(*) FROM vectors") == 4
+    assert embed(home, EmbedCollections(), quiet, Hashed(), sizes).collections[0].outcome == Embedded(8, 0)
+    assert counted(store(home), "SELECT count(DISTINCT chunk) FROM vectors") == 12
+
+
+def test_the_model_is_compiled_once_before_a_collection_with_many_passages_to_embed(tmp_path: Path) -> None:
+    home, models, said = sized_notes(tmp_path), Hashed(), list[Event]()
+    write(tmp_path / "few" / "a.md", "# A\n\nA note.\n")
+    add(home, AddCollection(str(tmp_path / "few")))
+    indexed(home)
+    embed(home, EmbedCollections(), said.append, models, Embedding(compile_from=12))
+    compiling = [index for index, event in enumerate(said) if event == PhaseStarted(Phase.COMPILE, None)]
+    assert (models.compiled, len(compiling)) == ([True], 1)
+    assert said[compiling[0] + 1 : compiling[0] + 4] == [PhaseDone(1), Noted("compiled"), PhaseStarted(Phase.EMBED, 12)]
+    fewer = Hashed()
+    embed(home, EmbedCollections(reset=True), quiet, fewer, Embedding(compile_from=13))
+    assert fewer.compiled == []
 
 
 def test_chunks_after_the_first_are_embedded_with_their_title_and_documents_as_documents(home: Path) -> None:
@@ -174,6 +214,9 @@ class Stopping:
             raise RuntimeError("the model would not load")
         return self.models.prepare()
 
+    def prepare_many(self) -> ModelsPrepared:
+        return self.models.prepare_many()
+
     def prepare_ranker(self) -> ModelsPrepared:
         return self.models.prepare_ranker()
 
@@ -216,14 +259,15 @@ def test_a_store_taken_by_another_model_midway_is_skipped_saying_so(home: Path) 
 
     def taken(event: Event) -> None:
         said.append(event)
-        if isinstance(event, Advanced) and event.done == 1:
+        if isinstance(event, Advanced) and event.done == 2:
             other = embed(home, EmbedCollections(reset=True), quiet, Hashed(name="other-model"))
             busy.extend(each.outcome for each in other.collections)
             with contextlib.closing(sqlite3.connect(store(home))) as database:
                 database.execute("UPDATE meta SET value = 'other-model' WHERE key = 'vector_model'")
                 database.commit()
 
-    (outcome,) = embed(home, EmbedCollections(), taken, Hashed(), Embedding(chunks_a_write=1)).collections
+    sizes = Embedding(chunks_a_call=1, chunks_a_read=1)
+    (outcome,) = embed(home, EmbedCollections(), taken, Hashed(), sizes).collections
     assert isinstance(outcome.outcome, Skipped)
     assert outcome.outcome.message == "the store holds vectors of other-model, not of hashed-words"
     assert [event for event in said if isinstance(event, PhaseStarted)][-1].phase is Phase.EMBED

@@ -46,21 +46,21 @@ class Movable:
     def get_embedding_dimension(self) -> int:
         return 4
 
-    def encode_query(
-        self, inputs: list[str], *, batch_size: int, normalize_embeddings: bool, show_progress_bar: bool
-    ) -> object:
-        self.asked.append((self.on, inputs, batch_size, normalize_embeddings, show_progress_bar))
-        return np.ones((len(inputs), 4), np.float32) / 2
+    prompts: dict[str, str] = field(default_factory=dict[str, str])
+    default_prompt_name: str | None = None
+    truncate_dim: int | None = None
 
-    def encode_document(
-        self, inputs: list[str], *, batch_size: int, normalize_embeddings: bool, show_progress_bar: bool
-    ) -> object:
-        return self.encode_query(
-            inputs,
-            batch_size=batch_size,
-            normalize_embeddings=normalize_embeddings,
-            show_progress_bar=show_progress_bar,
-        )
+    @property
+    def device(self) -> torch.device:
+        return torch.device("cpu")
+
+    def preprocess(self, inputs: list[str], prompt: str | None = None, *, task: str) -> dict[str, object]:
+        return {"texts": inputs, "prompt": prompt, "task": task}
+
+    def __call__(self, features: dict[str, object], *, task: str) -> dict[str, torch.Tensor]:
+        inputs = cast("list[str]", features["texts"])
+        self.asked.append((self.on, inputs, task))
+        return {"sentence_embedding": torch.ones((len(inputs), 4)) / 2}
 
     def predict(
         self, inputs: list[tuple[str, str]], *, batch_size: int, show_progress_bar: bool, activation_fn: torch.nn.Module

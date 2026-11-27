@@ -10,6 +10,14 @@ def unreported(_: Event) -> None:
     return None
 
 
+def compiled(report: Reporter, compile_models: Load) -> None:
+    report(PhaseStarted(Phase.COMPILE, None))
+    found = compile_models()
+    report(PhaseDone(int(found.built)))
+    for notice in found.notices:
+        report(Noted(notice))
+
+
 def prepared(report: Reporter, loads: Sequence[Load]) -> None:
     report(PhaseStarted(Phase.LOAD, None))
     found = [load() for load in loads]

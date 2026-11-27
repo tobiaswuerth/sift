@@ -1,3 +1,4 @@
+import itertools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache, partial
@@ -13,7 +14,8 @@ from sift.api.events import Advanced, CollectionStarted, Noted, Phase, PhaseDone
 from sift.api.ids import CollectionId
 from sift.api.indexing import Skipped
 from sift.app.collections import chosen, chosen_or_active
-from sift.app.loading import prepared
+from sift.app.loading import compiled, prepared
+from sift.domain.codec.codes import Halves
 from sift.domain.text.embedding import embedded
 from sift.domain.text.wording import counted
 from sift.inference.models import Models
@@ -30,7 +32,9 @@ BROKEN_REMEDY = "embed again; if they stay, the model fails on their text"
 
 @dataclass(frozen=True, slots=True)
 class Embedding:
-    chunks_a_write: int = 1024
+    chunks_a_call: int = 1024
+    chunks_a_read: int = 16_384
+    compile_from: int = 20_000
 
 
 EMBEDDING = Embedding()
@@ -45,6 +49,7 @@ class Work:
     models: Models
     embedding: Embedding
     ready: Callable[[], None]
+    compiled: Callable[[], None]
 
 
 def _waiting(connection: Connection, after: int, most: int) -> list[Pending]:
@@ -52,10 +57,19 @@ def _waiting(connection: Connection, after: int, most: int) -> list[Pending]:
         return pending(transaction, after, most)
 
 
-def _written(connection: Connection, models: Models, waiting: list[Pending]) -> VectorsPut:
-    matrix = models.encode([embedded(each.title, each.text, first=each.first) for each in waiting], query=False)
+def _length(waiting: Pending) -> int:
+    return len(waiting.text)
+
+
+def _encoded(models: Models, waiting: Sequence[Pending]) -> Halves:
+    return models.encode([embedded(each.title, each.text, first=each.first) for each in waiting], query=False)
+
+
+def _written(connection: Connection, models: Models, waiting: Sequence[Pending], matrix: Halves) -> VectorsPut:
+    chunks = np.array([each.chunk for each in waiting], np.int64)
+    order = np.argsort(chunks, kind="stable")
     with writing(connection) as transaction:
-        return put_vectors(transaction, np.array([each.chunk for each in waiting], np.int64), matrix, models.name)
+        return put_vectors(transaction, chunks[order], matrix[order], models.name)
 
 
 def _filled(connection: Connection, work: Work) -> Embedded:
@@ -66,12 +80,19 @@ def _filled(connection: Connection, work: Work) -> Embedded:
     if not total:
         return Embedded(0, 0)
     work.ready()
+    if total >= work.embedding.compile_from:
+        work.compiled()
     report(PhaseStarted(Phase.EMBED, total))
-    stored, broken, after = 0, 0, 0
-    while waiting := _waiting(connection, after, work.embedding.chunks_a_write):
-        kept = _written(connection, work.models, waiting)
+    stored, broken, after, done = 0, 0, 0, 0
+    while waiting := _waiting(connection, after, work.embedding.chunks_a_read):
+        longest_first = sorted(waiting, key=_length, reverse=True)
+        matrices: list[Halves] = []
+        for alike in itertools.batched(longest_first, work.embedding.chunks_a_call):
+            matrices.append(_encoded(work.models, alike))
+            done += len(alike)
+            report(Advanced(done))
+        kept = _written(connection, work.models, longest_first, np.concatenate(matrices))
         stored, broken, after = stored + kept.stored, broken + len(kept.broken), waiting[-1].chunk
-        report(Advanced(stored + broken))
     report(PhaseDone(stored))
     if broken:
         report(Noted(f"{counted(broken, 'chunk')} could not be embedded: the model gave no vector", BROKEN_REMEDY))
@@ -139,6 +160,7 @@ def embed(
         said = "embeds every collection again, as all share one model"
         raise InvalidRequestError(said, RESET_ALL_REMEDY, "reset")
     chosen_now = chosen_or_active(home, request.names, Audience.PEOPLE)
-    work = Work(report, models, embedding, cache(partial(prepared, report, (models.prepare,))))
+    ready, compiling = partial(prepared, report, (models.prepare,)), partial(compiled, report, models.prepare_many)
+    work = Work(report, models, embedding, cache(ready), cache(compiling))
     failed = _reset(home, report, work.ready, chosen_now) if request.reset else {}
     return EmbedResult(tuple(_embedded(one, work, failed) for one in chosen_now))

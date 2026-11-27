@@ -13,6 +13,7 @@ class Phase(StrEnum):
     MERGE = "merge"
     EMBED = "embed"
     LOAD = "load"
+    COMPILE = "compile"
     ORDER = "order"
     COPY = "copy"
     TITLE = "title"

@@ -1,5 +1,5 @@
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 import torch
@@ -33,13 +33,21 @@ class Embedder(Capped, Movable, Protocol):
 
     def get_embedding_dimension(self) -> int | None: ...
 
-    def encode_query(
-        self, inputs: list[str], *, batch_size: int, normalize_embeddings: bool, show_progress_bar: bool
-    ) -> object: ...
+    @property
+    def prompts(self) -> Mapping[str, str]: ...
 
-    def encode_document(
-        self, inputs: list[str], *, batch_size: int, normalize_embeddings: bool, show_progress_bar: bool
-    ) -> object: ...
+    @property
+    def default_prompt_name(self) -> str | None: ...
+
+    @property
+    def truncate_dim(self) -> int | None: ...
+
+    @property
+    def device(self) -> torch.device: ...
+
+    def preprocess(self, inputs: list[str], prompt: str | None = None, *, task: str) -> dict[str, object]: ...
+
+    def __call__(self, features: dict[str, object], *, task: str) -> Mapping[str, torch.Tensor]: ...
 
 
 class Ranker(Capped, Movable, Protocol):
@@ -56,10 +64,14 @@ class Ranker(Capped, Movable, Protocol):
     ) -> object: ...
 
 
+type Forward = Callable[..., Mapping[str, torch.Tensor]]
+
+
 @dataclass(frozen=True, slots=True)
 class Loaded:
     model: Embedder
     width: int
+    compiled: Forward | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +106,8 @@ def movables(state: OnDevice | InRam) -> tuple[Movable, ...]:
 
 
 def rested(state: OnDevice) -> InRam:
-    return InRam(state.embedder, state.ranker, state.batch, state.rerank_batch)
+    embedder = None if state.embedder is None else replace(state.embedder, compiled=None)
+    return InRam(embedder, state.ranker, state.batch, state.rerank_batch)
 
 
 def woken(state: InRam, device: Device, now: float) -> OnDevice:

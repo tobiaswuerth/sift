@@ -68,6 +68,10 @@ class Deferred:
         with self.lock:
             return self._built().prepare()
 
+    def prepare_many(self) -> ModelsPrepared:
+        with self.lock:
+            return self._built().prepare_many()
+
     def prepare_ranker(self) -> ModelsPrepared:
         with self.lock:
             return self._built().prepare_ranker()

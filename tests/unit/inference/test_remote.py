@@ -52,8 +52,9 @@ def worker(lent_settings: Settings) -> Generator[LiveWorker]:
 
 def test_a_worker_s_models_are_used_as_this_machine_s_would_be(worker: LiveWorker) -> None:
     remote, here = worker.remote(), Hashed()
-    assert (remote.name, remote.prepare(), remote.prepare_ranker()) == (
+    assert (remote.name, remote.prepare(), remote.prepare_ranker(), remote.prepare_many()) == (
         "hashed-words",
+        ModelsPrepared((), built=False),
         ModelsPrepared((), built=False),
         ModelsPrepared((), built=False),
     )

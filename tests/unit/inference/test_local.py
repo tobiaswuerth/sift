@@ -1,4 +1,5 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -11,12 +12,13 @@ from sentence_transformers.sentence_transformer.modules import Transformer
 from transformers.utils import logging as transformers_logging
 
 from sift.api.errors import ModelUnavailableError
-from sift.inference.accelerator import CPU
+from sift.inference.accelerator import CPU, Machine
 from sift.inference.held import Embedder, Loaded, OnDevice, Ranker
 from sift.inference.local import (
     BROKEN_REMEDY,
     UNLOADED_REMEDY,
     Local,
+    LocalHost,
     loading,
     local,
     unloaded,
@@ -24,9 +26,20 @@ from sift.inference.local import (
     within_memory,
 )
 from sift.inference.models import Models
+from sift.inference.prepared import ModelsPrepared
 from tests.models import Hashed
 from tests.tiny_model import POSITIONS, WIDTH, tiny_models, tiny_prompted, tiny_routed, tiny_static
 from tests.unit.inference.states import placed
+
+
+class Encoding(Protocol):
+    def encode_query(
+        self, inputs: list[str], *, batch_size: int, normalize_embeddings: bool, show_progress_bar: bool
+    ) -> object: ...
+
+    def encode_document(
+        self, inputs: list[str], *, batch_size: int, normalize_embeddings: bool, show_progress_bar: bool
+    ) -> object: ...
 
 
 @pytest.fixture(scope="module")
@@ -91,6 +104,90 @@ def test_the_fake_keeps_the_contract_the_local_models_keep(tiny: Path, make: Cal
     assert models.name != ""
 
 
+@dataclass(slots=True)
+class Compiled:
+    model: Embedder
+    sizes: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
+
+    def __call__(self, features: dict[str, object], *, task: str) -> Mapping[str, torch.Tensor]:
+        self.sizes.append((task, len(cast("torch.Tensor", features["input_ids"]))))
+        return self.model(features, task=task)
+
+
+def test_a_model_compiled_for_many_passages_runs_batches_of_documents_compiled_and_the_rest_as_it_is(
+    tiny: Path,
+) -> None:
+    made: list[Compiled] = []
+
+    def compiler(model: Embedder) -> Compiled:
+        made.append(Compiled(model))
+        return made[-1]
+
+    models = Local(str(tiny), host=LocalHost(compiler=compiler, compiles=lambda _: True))
+    texts = ["dark matter halo", "pruning skips ranges", "a third"]
+    plain = models.encode(texts, query=False)
+    prepared = models.prepare_many()
+    assert (prepared.built, len(made), prepared.notices[0].startswith(f"{models.name} was compiled")) == (True, 1, True)
+    warmed = len(made[0].sizes)
+    assert np.allclose(models.encode(texts, query=False), plain, atol=1e-3)
+    models.encode(["one alone"], query=False)
+    models.encode(texts, query=True)
+    assert made[0].sizes[warmed:] == [("document", 3)]
+    assert models.prepare_many() == ModelsPrepared((), built=False)
+
+
+def test_a_model_is_compiled_under_the_threads_it_runs_with_so_that_its_first_batch_compiles_nothing_again(
+    tiny: Path,
+) -> None:
+    events: list[str] = []
+
+    def compiler(model: Embedder) -> Callable[..., Mapping[str, torch.Tensor]]:
+        def forward(features: dict[str, object], *, task: str) -> Mapping[str, torch.Tensor]:
+            events.append("run")
+            return model(features, task=task)
+
+        return forward
+
+    machine = Machine(threads=lambda count: events.append(f"threads {count}"))
+    models = Local(str(tiny), host=LocalHost(machine=machine, compiler=compiler, compiles=lambda _: True))
+    assert models.prepare_many().built is True
+    assert events[:2] == [f"threads {CPU.threads}", "run"]
+
+
+def test_a_model_that_cannot_be_compiled_says_so_and_embeds_as_it_is(tiny: Path) -> None:
+    def compiler(_: Embedder) -> Callable[..., Mapping[str, torch.Tensor]]:
+        def failing(features: dict[str, object], *, task: str) -> Mapping[str, torch.Tensor]:
+            raise RuntimeError(f"no compiler for this GPU\nwhile {task}s of {len(features)} features were run")
+
+        return failing
+
+    models = Local(str(tiny), host=LocalHost(compiler=compiler, compiles=lambda _: True))
+    said = f"{models.name} could not be compiled, so it runs as it is: no compiler for this GPU"
+    assert models.prepare_many() == ModelsPrepared((said,), built=False)
+    assert models.encode(["dark matter", "halo"], query=False).shape == (2, WIDTH)
+    assert Local(str(tiny)).prepare_many() == ModelsPrepared((), built=False)
+
+
+def test_a_recursion_too_deep_while_the_model_is_compiled_is_raised_whatever_it_says(tiny: Path) -> None:
+    def compiler(_: Embedder) -> Callable[..., Mapping[str, torch.Tensor]]:
+        raise RecursionError("out of memory")
+
+    with pytest.raises(RecursionError):
+        Local(str(tiny), host=LocalHost(compiler=compiler, compiles=lambda _: True)).prepare_many()
+
+
+def test_the_compiler_of_the_models_wraps_the_model_and_compiles_it_when_it_first_runs(tiny: Path) -> None:
+    models = Local(str(tiny))
+    models.prepare()
+    model = embedder_of(models).model
+    compiled = LocalHost().compiler(model)
+    assert (compiled is model, isinstance(compiled, torch.nn.Module), type(compiled).__name__) == (
+        False,
+        True,
+        "OptimizedModule",
+    )
+
+
 def test_a_model_that_says_not_how_wide_its_vectors_are_is_refused() -> None:
     assert width_of("m", 768) == 768
     with pytest.raises(ValueError, match="m says not how wide its vectors are"):
@@ -108,7 +205,7 @@ def test_queries_and_documents_are_embedded_with_their_prompts_and_at_most_1024_
     models = Local(str(folder))
     texts = ["dark matter", "skips ranges"]
     queries, documents = models.encode(texts, query=True), models.encode(texts, query=False)
-    own = cast("Embedder", SentenceTransformer(str(folder)))
+    own = cast("Encoding", SentenceTransformer(str(folder)))
     query = own.encode_query(texts, batch_size=2, normalize_embeddings=True, show_progress_bar=False)
     document = own.encode_document(texts, batch_size=2, normalize_embeddings=True, show_progress_bar=False)
     assert np.allclose(queries, np.asarray(query, np.float32), atol=1e-2)
@@ -185,9 +282,13 @@ def test_recursion_too_deep_while_a_model_runs_is_raised_whatever_it_says() -> N
 
 
 def test_a_model_routing_queries_to_static_embeddings_caps_only_what_reads_tokens(tmp_path: Path) -> None:
-    models = Local(str(tiny_routed(tmp_path)))
-    assert models.encode(["dark matter"], query=True).shape == (1, WIDTH)
-    assert models.encode(["dark matter"], query=False).shape == (1, WIDTH)
+    folder = tiny_routed(tmp_path)
+    models, texts = Local(str(folder)), ["dark matter", "skips ranges"]
+    own = cast("Encoding", SentenceTransformer(str(folder)))
+    query = own.encode_query(texts, batch_size=2, normalize_embeddings=True, show_progress_bar=False)
+    document = own.encode_document(texts, batch_size=2, normalize_embeddings=True, show_progress_bar=False)
+    assert np.allclose(models.encode(texts, query=True), np.asarray(query, np.float32), atol=1e-2)
+    assert np.allclose(models.encode(texts, query=False), np.asarray(document, np.float32), atol=1e-2)
     assert [each.max_seq_length for each in embedder_of(models).model.modules() if isinstance(each, Transformer)] == [
         1024
     ]

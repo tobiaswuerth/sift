@@ -52,6 +52,9 @@ class Watched:
     def prepare(self) -> ModelsPrepared:
         return self.inner.prepare()
 
+    def prepare_many(self) -> ModelsPrepared:
+        return self.inner.prepare_many()
+
     def prepare_ranker(self) -> ModelsPrepared:
         return self.inner.prepare_ranker()
 
@@ -116,6 +119,7 @@ def test_models_closed_let_go_of_what_was_built_and_are_built_again_when_used() 
     assert (shared.built, shared.release_idle()) == (None, False)
     shared.encode(["halo"], query=True)
     assert crowded.builds == [("model", "reranker", None)] * 2
+    assert shared.prepare_many() == ModelsPrepared(("compiled",), built=True)
 
 
 def test_the_note_pytorch_logs_on_a_mac_as_the_models_load_is_silenced() -> None:

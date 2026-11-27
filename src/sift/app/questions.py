@@ -25,6 +25,9 @@ class RememberedQuestions:
     def prepare(self) -> ModelsPrepared:
         return self.models.prepare()
 
+    def prepare_many(self) -> ModelsPrepared:
+        return self.models.prepare_many()
+
     def prepare_ranker(self) -> ModelsPrepared:
         return self.models.prepare_ranker()
 

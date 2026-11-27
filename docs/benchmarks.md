@@ -59,8 +59,9 @@ judged in pools of both versions' results (nDCG@10 / MRR@10 / Recall@10):
 | Swiss federal law (long passages) | 129 a second (76,738 with the notes, in 9 min 55 s) | 110 a second (75,851 in 11 min 29 s) |
 | The ACL Anthology (abstracts) | | 391 a second (90,546 in 3 min 52 s) |
 
-sift 1.15.2 read the next 20,000 passages and wrote the vectors on threads of their own while the GPU embedded; sift 2
-reads 1,024 passages, embeds them and writes them in turn.
+These were measured before sift 2 compiled the model for the GPU. On one GPU and the same 40,579 PubMed abstracts,
+sift 2 now embeds 1,180 passages a second where sift 1.15.2 embeds 590, after 20 s of compiling (41 s the first
+time). Both sort the passages they read by length; sift 2 also cuts the words of the next batch while the GPU runs.
 
 **Indexing** the ACL Anthology anew (1,134 files of JSON Lines, 90,504 records), `sift index` with the keyword index:
 sift 2.0 in 24 s, sift 1.15.2 in 29 s (12 s reading, then its postings).
