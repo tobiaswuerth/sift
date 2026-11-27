@@ -6,15 +6,16 @@ from pathlib import Path
 
 import pytest
 
+from sift.api.errors import StoreUnavailableError
 from sift.domain.errors import DamagedError
 from sift.storage.database import Batches, Connection, Reading, rows, run, writing
 from sift.storage.keyword_beside import built
-from sift.storage.keyword_reads import Named, Passages, Span, passages_at_once, read_ahead, read_in
+from sift.storage.keyword_reads import STUCK_REMEDY, Named, Passages, Span, passages_at_once, read_ahead, read_in
 from sift.storage.keywords import remade, remake_started, writing_keywords
 from tests.keyword_indexes import NOTES, TWO, checked, staled
 from tests.keyword_orders import placed, placed_in
 from tests.keyword_stores import SMALL, applied, opened_store
-from tests.waits import paused
+from tests.waits import until, waited
 
 SPANS = "SELECT place AS id, document, start, length FROM chunks ORDER BY place DESC"
 PARTS = Batches(chunks_a_read=3, chunks_a_read_beside=1, readers=2)
@@ -109,18 +110,25 @@ def test_a_passage_a_reader_cannot_cut_is_damage_where_the_passages_are_taken() 
     assert readers_left() == []
 
 
-def test_a_part_not_read_in_time_says_reading_the_store_is_stuck() -> None:
-    def slow(transaction: Reading, spans: Sequence[Span]) -> Passages:
-        paused(0.5)
+def test_a_part_not_read_in_time_says_reading_the_store_is_stuck_without_waiting_for_it() -> None:
+    release = threading.Event()
+
+    def stuck(transaction: Reading, spans: Sequence[Span]) -> Passages:
+        waited(release)
         return passages_at_once(transaction, spans)
 
     with noted() as connection, writing_keywords(connection, PARTS) as transaction:
         spans = spans_of(transaction)
         with (
-            pytest.raises(TimeoutError, match="passages were not read within 0 s: reading the store is stuck"),
-            read_ahead(transaction, spans, read=slow, waited=0.01) as reads,
+            pytest.raises(
+                StoreUnavailableError, match="passages were not read within 0 s: reading the store is stuck"
+            ) as told,
+            read_ahead(transaction, spans, read=stuck, waited=0.01) as reads,
         ):
             list(reads)
+        left = readers_left()
+        release.set()
+    assert (left != [], told.value.remedy, until(lambda: readers_left() == [])) == (True, STUCK_REMEDY, True)
 
 
 def test_an_order_and_a_remake_read_their_passages_beside_the_writer_and_new_documents_where_they_are_written() -> None:

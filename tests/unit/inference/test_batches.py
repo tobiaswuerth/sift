@@ -5,9 +5,10 @@ from collections.abc import Sequence
 import numpy as np
 import pytest
 
+from sift.api.errors import ModelUnavailableError
 from sift.domain.codec.codes import Floats
-from sift.inference.batches import Attempt, BatchShape, in_batches
-from tests.waits import paused, waited
+from sift.inference.batches import STUCK_REMEDY, Attempt, BatchShape, in_batches
+from tests.waits import until, waited
 
 
 class TooLargeError(Exception):
@@ -175,10 +176,19 @@ def test_a_recursion_too_deep_while_a_batch_is_prepared_is_raised_where_the_batc
         in_batches(["a", "b"], [2, 1], BatchShape(2, 1), Attempt(preparing, lengths, too_large, lambda: None))
 
 
-def test_a_batch_not_prepared_in_time_says_the_tokenizer_is_stuck() -> None:
+def preparers() -> list[str]:
+    return [each.name for each in threading.enumerate() if each.name.startswith("sift-prepare")]
+
+
+def test_a_batch_not_prepared_in_time_says_the_tokenizer_is_stuck_without_waiting_for_it() -> None:
+    release = threading.Event()
+
     def preparing(texts: list[str]) -> list[str]:
-        paused(0.5)
+        waited(release)
         return texts
 
-    with pytest.raises(TimeoutError, match="a batch was not ready within 0 s: the tokenizer is stuck"):
+    with pytest.raises(ModelUnavailableError, match="a batch was not ready within 0 s: the tokenizer is stuck") as told:
         in_batches(["a"], [1], BatchShape(2, 1), Attempt(preparing, lengths, too_large, lambda: None), waited=0.01)
+    stuck = preparers()
+    release.set()
+    assert (stuck != [], told.value.remedy, until(lambda: preparers() == [])) == (True, STUCK_REMEDY, True)

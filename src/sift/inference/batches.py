@@ -6,12 +6,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from sift.api.errors import ModelUnavailableError
 from sift.domain.arrays import ints
 from sift.domain.codec.codes import Floats
 
 AHEAD = 2
 WAITED_SECONDS = 600.0
 STUCK = "a batch was not ready within {seconds:.0f} s: the tokenizer is stuck"
+STUCK_REMEDY = "stop sift and embed again: what it embedded so far is kept"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,26 +40,27 @@ def _ready[P](future: "Future[P]", waited: float) -> P:
     try:
         return future.result(timeout=waited)
     except TimeoutError:
-        raise TimeoutError(STUCK.format(seconds=waited)) from None
+        raise ModelUnavailableError(STUCK.format(seconds=waited), STUCK_REMEDY) from None
 
 
 @contextmanager
 def _ahead[P](prepare: Callable[[list[str]], P], parts: Sequence[list[str]], waited: float) -> Generator[Iterator[P]]:
-    with ThreadPoolExecutor(1, thread_name_prefix="sift-prepare") as pool:
-        pending = deque(pool.submit(prepare, part) for part in parts[:AHEAD])
+    pool = ThreadPoolExecutor(1, thread_name_prefix="sift-prepare")
+    pending = deque(pool.submit(prepare, part) for part in parts[:AHEAD])
 
-        def taken() -> Iterator[P]:
-            for at in range(len(parts)):
-                future = pending.popleft()
-                if at + AHEAD < len(parts):
-                    pending.append(pool.submit(prepare, parts[at + AHEAD]))
-                yield _ready(future, waited)
+    def taken() -> Iterator[P]:
+        for at in range(len(parts)):
+            future = pending.popleft()
+            if at + AHEAD < len(parts):
+                pending.append(pool.submit(prepare, parts[at + AHEAD]))
+            yield _ready(future, waited)
 
-        try:
-            yield taken()
-        finally:
-            for future in pending:
-                future.cancel()
+    try:
+        yield taken()
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True, cancel_futures=True)
 
 
 def in_batches[P](

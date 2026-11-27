@@ -7,6 +7,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager, ExitStack, closing, contextmanager
 from typing import NamedTuple, cast
 
+from sift.api.errors import StoreUnavailableError
 from sift.api.ids import DocumentId
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS
 from sift.storage.database import Connection, Reading, Value, WritingDocuments, file_of, read_only, rows
@@ -19,6 +20,9 @@ DOCUMENTS_AT_ONCE = """SELECT json_group_array(json_array(id, substr(title, 1, ?
 AHEAD = 2
 WAITED_SECONDS = 600.0
 STUCK = "passages were not read within {seconds:.0f} s: reading the store is stuck"
+STUCK_REMEDY = (
+    "stop sift and index again: what it built so far is kept; if it sticks again, check the drive of the store"
+)
 
 
 class Span(NamedTuple):
@@ -73,7 +77,7 @@ def _ready(future: "Future[Passages]", waited: float) -> Passages:
     try:
         return future.result(timeout=waited)
     except TimeoutError:
-        raise TimeoutError(STUCK.format(seconds=waited)) from None
+        raise StoreUnavailableError(STUCK.format(seconds=waited), STUCK_REMEDY) from None
 
 
 @contextmanager
@@ -98,7 +102,7 @@ def read_ahead(
         path = file_of(transaction.connection)
         for _ in range(readers):
             idle.put(held.enter_context(closing(read_only(path))))
-        pool = held.enter_context(ThreadPoolExecutor(readers, thread_name_prefix="sift-read"))
+        pool = ThreadPoolExecutor(readers, thread_name_prefix="sift-read")
         ahead = readers * AHEAD
         pending = deque(pool.submit(taken, part) for part in parts[:ahead])
 
@@ -111,6 +115,7 @@ def read_ahead(
 
         try:
             yield each()
-        finally:
-            for future in pending:
-                future.cancel()
+        except BaseException:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown(wait=True, cancel_futures=True)
