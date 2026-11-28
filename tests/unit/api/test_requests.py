@@ -12,7 +12,8 @@ from sift.api import collections, documents, embedding, indexing, jobs, links, s
 from sift.api.described import Bounds, Help, Length, Within
 from sift.api.errors import InvalidRequestError
 from sift.api.filters import Filter, Operator
-from sift.api.requests import Request
+from sift.api.reindexing import ReindexFiles
+from sift.api.requests import Request, checked
 from sift.api.search import SearchHybrid, SearchKeywords
 from sift.api.wire import decoded
 
@@ -264,3 +265,15 @@ def test_no_help_text_speaks_the_command_line_s_syntax() -> None:
     ]
     assert len(texts) > 60
     assert [text for text in texts if CLI_WORDS.search(text)] == []
+
+
+@pytest.mark.parametrize(
+    "request_with_a_null",
+    [
+        lambda: ReindexFiles(("notes/a\N{NULL}.md",)),
+        lambda: collections.AddCollection("C:/notes\N{NULL}"),
+    ],
+)
+def test_a_path_holding_a_null_character_is_refused_as_no_path(request_with_a_null: Callable[[], object]) -> None:
+    with pytest.raises(InvalidRequestError, match="holds a null character, which no path holds"):
+        checked(request_with_a_null())

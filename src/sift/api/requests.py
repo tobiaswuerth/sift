@@ -10,7 +10,7 @@ from functools import cache
 from types import MappingProxyType
 from typing import Annotated, Literal, TypeAliasType, cast, get_args, get_origin, get_type_hints
 
-from sift.api.described import Bounds, Composed, Length, Within
+from sift.api.described import AbsolutePath, Bounds, Composed, FileOrId, Length, Within
 from sift.api.errors import InvalidRequestError
 
 SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
@@ -176,8 +176,16 @@ def _spanned(name: str, value: object, span: Within) -> None:
         raise InvalidRequestError(said, f"give {span.low:,g} to {span.high:,g}", name)
 
 
+def _a_path(name: str, value: object) -> None:
+    texts = cast("tuple[object, ...]", value) if isinstance(value, tuple) else (value,)
+    if any(isinstance(text, str) and "\N{NULL}" in text for text in texts):
+        raise InvalidRequestError(f"{name} holds a null character, which no path holds", "name it without one", name)
+
+
 def _held_to(name: str, value: object, mark: object) -> None:
-    if isinstance(mark, Bounds):
+    if isinstance(mark, FileOrId | AbsolutePath):
+        _a_path(name, value)
+    elif isinstance(mark, Bounds):
         _bounded(name, value, mark)
     elif isinstance(mark, Length):
         _sized(name, value, mark)

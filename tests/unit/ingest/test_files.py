@@ -61,3 +61,4 @@ def test_a_name_the_folder_lists_otherwise_is_given_as_listed_and_one_gone_is_pa
     listings = Listings({tmp_path / "notes": (frozenset({"gone.md", "Listed.md"}), ("gone.md", "Listed.md"))})
     assert listings.listed_as(tmp_path, "notes/named.md") == "notes/Listed.md"
     assert listings.listed_as(tmp_path, "notes/never.md") == "notes/never.md"
+    assert listings.listed_as(tmp_path, "notes/a\N{NULL}.md") == "notes/a\N{NULL}.md"

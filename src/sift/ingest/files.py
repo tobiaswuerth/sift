@@ -58,7 +58,7 @@ class Listings:
             return part
         try:
             wanted = own_identity_at(folder / part)
-        except OSError:
+        except (OSError, ValueError):
             return part
         return next((name for name in names if _same(folder / name, wanted)), part)
 
