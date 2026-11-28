@@ -253,7 +253,7 @@ def many(tmp_path: Path, name: str, notes: int) -> Path:
 @pytest.mark.parametrize(
     "notes, left",
     [
-        (400, ["second/even/348.md", "second/even/42.md", "second/even/138.md"]),
+        (600, ["second/even/348.md", "second/even/42.md", "second/even/514.md"]),
         (6, ["second/even/2.md", "second/even/0.md", "second/even/4.md"]),
     ],
 )
