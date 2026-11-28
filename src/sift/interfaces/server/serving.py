@@ -26,7 +26,7 @@ from sift.app.questions import RememberedQuestions
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import fresh_models
 from sift.interfaces.server.activity import Activity
-from sift.interfaces.server.app import ALIVE_SECONDS, LOGGER, Serving
+from sift.interfaces.server.app import ALIVE_SECONDS, BODY_SECONDS, LOGGER, Serving
 from sift.interfaces.server.endpoint import SERVER, SERVING, Endpoint, found, own_endpoint, written
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.heads import HeadsInTime
@@ -158,6 +158,7 @@ class Serve:
     clock: Callable[[], float] = time.perf_counter
     idle_every: float = IDLE_CHECK_SECONDS
     keep_alive_seconds: int = KEEP_ALIVE_SECONDS
+    body_seconds: float = BODY_SECONDS
     most_connections: int = MOST_CONNECTIONS
 
 
@@ -194,7 +195,16 @@ def held(
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
         activity = Activity(how.clock)
         serving = Serving(
-            settings, endpoint.token, version, *kept, writer, pool, activity, how.alive_every, clock=how.clock
+            settings,
+            endpoint.token,
+            version,
+            *kept,
+            writer,
+            pool,
+            activity,
+            how.alive_every,
+            how.body_seconds,
+            clock=how.clock,
         )
         app = served_app(serving, how.handled)
         config = uvicorn.Config(

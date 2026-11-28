@@ -286,3 +286,14 @@ def test_a_process_started_in_the_background_shows_its_window_minimized(tmp_path
     with in_the_background([sys.executable, "-c", WINDOW_SAID, str(said)], tmp_path) as running:
         assert running.wait(30) == 0
     assert said.read_text(encoding="utf-8") == "True True True"
+
+
+def test_a_message_too_long_or_with_a_number_past_json_is_refused_under_its_own_id_or_none(settings: Settings) -> None:
+    out = io.BytesIO()
+    long = {"jsonrpc": "2.0", "id": 5, "method": "ping", "params": {"pad": "x" * (2 << 20)}}
+    with running(settings):
+        proxied(settings, quiet, Pipes(lines(long, b'{"jsonrpc": "2.0", "id": 1e400, "method": "ping"}\n'), out))
+    found = answers(out)
+    assert set(found) == {5, None}
+    assert cast("Message", found[5]["error"])["code"] == -32600
+    assert cast("Message", found[None]["error"])["code"] == -32700

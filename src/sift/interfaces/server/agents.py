@@ -19,7 +19,18 @@ from sift.interfaces.mcp.instructions import instructions, unlisted
 from sift.interfaces.mcp.offered import TOOLS
 from sift.interfaces.mcp.protocol import SPOKEN, reply
 from sift.interfaces.mcp.tools import Started, Tool
-from sift.interfaces.server.app import FAILED_REMEDY, HOSTS, LOGGER, Sent, Serving, body_of, json_of, read_for, run_job
+from sift.interfaces.server.app import (
+    FAILED_REMEDY,
+    HOSTS,
+    LOGGER,
+    Sent,
+    Serving,
+    UnreadBody,
+    body_of,
+    json_of,
+    read_for,
+    run_job,
+)
 from sift.interfaces.server.handled import Handled
 
 JOB_WAIT_SECONDS = 20.0
@@ -103,7 +114,12 @@ async def _replied(serving: Serving, served: AgentsServed, message: object) -> J
 
 
 def _foreign(origin: str | None) -> bool:
-    return origin is not None and urlsplit(origin).hostname not in HOSTS
+    if origin is None:
+        return False
+    try:
+        return urlsplit(origin).hostname not in HOSTS
+    except ValueError:
+        return True
 
 
 def _unwelcome(request: Request) -> Response | None:
@@ -123,9 +139,9 @@ async def agents_answered(serving: Serving, handled: Mapping[str, Handled], requ
     unwelcome = _unwelcome(request)
     if unwelcome is not None:
         return unwelcome
-    body = await body_of(request)
-    if body is None:
-        return _refused(413, NOT_A_MESSAGE, "the message is too long")
+    body = await body_of(request, serving.body_seconds)
+    if isinstance(body, UnreadBody):
+        return _refused(body.status, NOT_A_MESSAGE, body.error.message)
     try:
         message = json_of(body)
     except (InvalidRequestError, ValueError) as error:

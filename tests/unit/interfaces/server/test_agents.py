@@ -159,6 +159,7 @@ def test_a_tool_refused_tells_the_agent_how_to_fix_the_call(home: Settings) -> N
     [
         ({"Origin": "https://attacker.example"}, 403),
         ({"Origin": "null"}, 403),
+        ({"Origin": "http://[::1"}, 403),
         ({"Origin": "http://localhost:3000"}, 200),
         ({"MCP-Protocol-Version": "2099-01-01"}, 400),
         ({"MCP-Protocol-Version": "2025-06-18"}, 200),
@@ -180,7 +181,9 @@ def test_what_is_not_one_posted_message_is_refused(home: Settings) -> None:
         listening, allowed, _ = posted(server, b"", method="GET")
         garbled, _, read = posted(server, b"{nope")
         long, _, _ = posted(server, b"[" * (1 << 21))
-    assert (listening, allowed["allow"], garbled, long) == (405, "POST", 400, 413)
+        past, _, beyond = posted(server, b'{"jsonrpc": "2.0", "id": 1e400, "method": "ping"}')
+    assert (listening, allowed["allow"], garbled, long, past) == (405, "POST", 400, 413, 400)
+    assert b"1e400, which is no JSON number" in beyond
     refusal = cast("Message", cast("Message", json.loads(read))["error"])
     assert refusal["code"] == -32700
     assert cast("str", refusal["message"]).startswith("the message is no JSON: Expecting property name")

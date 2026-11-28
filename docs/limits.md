@@ -113,6 +113,8 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.interfaces.server.app` | `ALIVE_SECONDS` | `30.0` |
 | `sift.interfaces.server.app` | `MOST_BODY` | `1 << 20` |
 | `sift.interfaces.server.app` | `MOST_DEPTH` | `64` |
+| `sift.interfaces.server.app` | `BODY_SECONDS` | `30.0` |
+| `sift.interfaces.server.app` | `Serving.body_seconds` | `BODY_SECONDS` |
 | `sift.interfaces.server.client` | `QUIET_SECONDS` | `120.0` |
 | `sift.interfaces.server.client` | `MOST_LINE` | `1 << 30` |
 | `sift.interfaces.server.endpoint` | `STARTING_SECONDS` | `2.0` |
@@ -134,6 +136,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.interfaces.server.serving` | `MOST_CONNECTIONS` | `256` |
 | `sift.interfaces.server.serving` | `Serve.grace_seconds` | `GRACE_SECONDS` |
 | `sift.interfaces.server.serving` | `Serve.keep_alive_seconds` | `KEEP_ALIVE_SECONDS` |
+| `sift.interfaces.server.serving` | `Serve.body_seconds` | `BODY_SECONDS` |
 | `sift.interfaces.server.serving` | `Serve.most_connections` | `MOST_CONNECTIONS` |
 | `sift.interfaces.worker.app` | `MOST_BODY` | `32 << 20` |
 | `sift.interfaces.worker.app` | `MOST_NESTING` | `4` |

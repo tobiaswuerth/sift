@@ -1,6 +1,7 @@
 import http.client
 import io
 import json
+import logging
 import select
 import socket
 from typing import cast
@@ -16,6 +17,7 @@ from sift.interfaces.server.serving import HomeServer, Serve
 from sift.settings import Settings
 from tests.homes import quiet
 from tests.serving import running
+from tests.waits import until
 
 HEAD = b"POST /api/status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
 TRICKLED = HEAD + b"X-Slow: " + b"a" * 400
@@ -102,3 +104,28 @@ def test_past_its_most_connections_the_home_process_tells_an_agent_it_is_busy_in
         "id": 7,
         "error": {"code": -32603, "message": f"{BUSY}; fix: {BUSY_REMEDY}"},
     }
+
+
+def bodiless(path: str, given: bytes = b"") -> bytes:
+    kind = b"Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
+    return f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n".encode() + kind + given + b"Content-Length: 100\r\n\r\n{"
+
+
+def test_a_request_whose_body_does_not_come_in_time_is_refused_as_too_slow(settings: Settings) -> None:
+    with running(settings, how=Serve(body_seconds=0.5)) as server:
+        token = f"Authorization: Bearer {server.endpoint.token}\r\n".encode()
+        for head in (bodiless("/mcp"), bodiless("/api/status", token)):
+            with opened(server) as left:
+                left.sendall(head)
+                assert left.recv(12) == b"HTTP/1.1 408"
+
+
+def test_a_client_gone_before_its_body_came_is_noted_without_an_error(
+    settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    with running(settings) as server:
+        with opened(server) as left:
+            left.sendall(bodiless("/mcp"))
+        assert until(lambda: "left before the body of its request came" in caplog.text)
+    assert [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR] == []

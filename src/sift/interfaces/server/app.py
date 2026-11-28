@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import json
 import logging
+import math
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -14,7 +15,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from starlette.exceptions import HTTPException
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
@@ -59,6 +60,9 @@ NOT_BY_POST = 405
 POSTED_ALONE = InvalidRequestError("a command is sent by POST", "POST its request as JSON to /api/COMMAND")
 NO_JSON = InvalidRequestError("the request is no JSON", NO_JSON_REMEDY)
 TOO_LARGE = InvalidRequestError(f"the request is longer than {MOST_BODY:,} bytes", "send a shorter request")
+BODY_SECONDS = 30.0
+SLOW = InvalidRequestError("the body of the request did not come in time", "send the request whole at once")
+LEFT = InvalidRequestError("the client left before the body of its request came", "send the request whole")
 FAILED_REMEDY = "see the home process's log in SIFT_HOME/logs, and report it"
 UNLISTED_AFTER = "the collections could not be listed after %s: nothing of a store stays in memory"
 SPOKEN = MappingProxyType({CONTRACT_HEADER: contract_text(CONTRACT)})
@@ -78,6 +82,7 @@ class Serving:
     pool: ThreadPoolExecutor
     activity: Activity
     alive_every: float = ALIVE_SECONDS
+    body_seconds: float = BODY_SECONDS
     gate: Gate = field(default_factory=Gate)
     jobs: Jobs = field(default_factory=Jobs)
     clock: Callable[[], float] = time.perf_counter
@@ -89,6 +94,13 @@ def _line(value: Json) -> bytes:
 
 def _no_number(name: str) -> object:
     raise InvalidRequestError(f"the request holds {name}, which is no JSON number", NO_JSON_REMEDY)
+
+
+def _finite(text: str) -> float:
+    number = float(text)
+    if not math.isfinite(number):
+        _no_number(text[:40])
+    return number
 
 
 def _given_once(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -104,7 +116,9 @@ def json_of(body: bytes) -> object:
     text = body.decode()
     if deeper_than(text, MOST_DEPTH):
         raise InvalidRequestError(f"the request is nested more than {MOST_DEPTH} deep", NO_JSON_REMEDY)
-    return cast("object", json.loads(text, parse_constant=_no_number, object_pairs_hook=_given_once))
+    return cast(
+        "object", json.loads(text, parse_float=_finite, parse_constant=_no_number, object_pairs_hook=_given_once)
+    )
 
 
 def _refused(error: SiftError, status: int) -> JSONResponse:
@@ -293,12 +307,28 @@ async def _streamed(serving: Serving, name: str, handled: Handled, data: object)
     await asyncio.wrap_future(ran)
 
 
-async def body_of(request: Request, most: int = MOST_BODY) -> bytes | None:
+@dataclass(frozen=True, slots=True)
+class UnreadBody:
+    status: int
+    error: InvalidRequestError
+
+
+TOO_LONG_BODY, SLOW_BODY, LEFT_BODY = UnreadBody(413, TOO_LARGE), UnreadBody(408, SLOW), UnreadBody(400, LEFT)
+
+
+async def body_of(request: Request, seconds: float, most: int = MOST_BODY) -> bytes | UnreadBody:
     read = bytearray()
-    async for chunk in request.stream():
-        read += chunk
-        if len(read) > most:
-            return None
+    try:
+        async with asyncio.timeout(seconds):
+            async for chunk in request.stream():
+                read += chunk
+                if len(read) > most:
+                    return TOO_LONG_BODY
+    except TimeoutError:
+        return SLOW_BODY
+    except ClientDisconnect:
+        logging.getLogger(LOGGER).info(LEFT.message)
+        return LEFT_BODY
     return bytes(read)
 
 
@@ -306,9 +336,9 @@ async def _command(serving: Serving, name: str, handled: Handled, request: Reque
     given = (request.headers.get("authorization") or "").encode()
     if not hmac.compare_digest(given, f"Bearer {serving.token}".encode()):
         return _refused(UNAUTHORIZED, 401)
-    body = await body_of(request)
-    if body is None:
-        return _refused(TOO_LARGE, 413)
+    body = await body_of(request, serving.body_seconds)
+    if isinstance(body, UnreadBody):
+        return _refused(body.error, body.status)
     try:
         data = json_of(body)
     except InvalidRequestError as refused:

@@ -1,6 +1,7 @@
 import http.client
 import json
 import logging
+import math
 import subprocess
 import sys
 import threading
@@ -134,9 +135,16 @@ def _posted(endpoint: Endpoint, body: bytes, quiet: float) -> _Posted:
         connection.close()
 
 
+def _finite(text: str) -> float:
+    number = float(text)
+    if not math.isfinite(number):
+        raise ValueError(text[:40])
+    return number
+
+
 def _asked_id(body: bytes) -> Json:
     try:
-        read = cast("object", json.loads(body))
+        read = cast("object", json.loads(body, parse_float=_finite))
     except ValueError:
         return None
     return cast("Json", cast("dict[str, object]", read).get("id")) if isinstance(read, dict) else None
@@ -163,7 +171,20 @@ def _relayed(home: _Home, body: bytes) -> bytes | None:
         return _failed(body, f"{BUSY}; fix: {BUSY_REMEDY}")
     if posted.status == http.client.ACCEPTED or not posted.body:
         return None
-    return posted.body if posted.json else _failed(body, f"{NO_JSON.format(status=posted.status)}; fix: {LOG_REMEDY}")
+    if not posted.json:
+        return _failed(body, f"{NO_JSON.format(status=posted.status)}; fix: {LOG_REMEDY}")
+    return _owned(body, posted.body)
+
+
+def _owned(body: bytes, answer: bytes) -> bytes:
+    at = _asked_id(body)
+    try:
+        read = cast("object", json.loads(answer))
+    except ValueError:
+        return answer
+    if at is None or not isinstance(read, dict) or cast("dict[str, object]", read).get("id") is not None:
+        return answer
+    return json.dumps({**cast("dict[str, object]", read), "id": at}).encode()
 
 
 def _answered(home: _Home, body: bytes) -> bytes | None:
