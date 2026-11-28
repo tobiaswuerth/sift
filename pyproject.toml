@@ -13,12 +13,12 @@ authors = [{ name = "Tobias Würth" }]
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",  # np.bitwise_count, which counts the bits of the codes, came with 2.0
-    "torch>=2.13",  # older releases have advisories known against them
+    "torch>=2.14",  # older releases have advisories known against them; 2.13 warns of its own deprecations compiling
     "sentence-transformers>=6.1",  # the module layout embeddinggemma-2 is saved in
     "transformers>=5.18",  # the first release with embeddinggemma-2
     "huggingface-hub>=1.31",  # the downloads of models; transformers 5.18 needs 1.31
     "pillow>=13",  # embeddinggemma-2 takes images too, so transformers needs Pillow; older ones have advisories
-    "torchvision>=0.28",  # and torchvision; it must match torch (0.28 is 2.13's)
+    "torchvision>=0.29",  # and torchvision; it must match torch (0.29 is 2.14's)
     # The four below: free GPU memory as nvidia-smi sees it (CUDA overstates it on Windows); PDF, office files,
     # e-books and web pages as Markdown; the pages of scans as pictures for OCR; the server of the home process. No
     # newer feature is used: each floor is the version sift was first built on, which the lowest session tests.
