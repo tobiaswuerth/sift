@@ -2,15 +2,13 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-import numpy as np
-
 from sift.api.ids import ChunkId, DocumentId
-from sift.domain.arrays import Ascending, Ids, Scores, among, distinct, ints
+from sift.domain.arrays import ints
 from sift.domain.errors import DamagedError
 from sift.domain.query.expressions import Expression, Leaf, Phrase, Prefix, Term, leaves
-from sift.domain.rank.best import Best, may_reach, offered, ranked, unreached_alone
+from sift.domain.rank import pruned
+from sift.domain.rank.best import Best, ranked
 from sift.domain.rank.bm25 import OVERCOUNTED, idf
-from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
 from sift.retrieval.keyword.leaves import (
     PHRASE_REMEDY,
@@ -22,8 +20,8 @@ from sift.retrieval.keyword.leaves import (
     refused,
     size,
 )
-from sift.retrieval.keyword.lists import Opened, PostingArrays, StoredList, owners, stored
-from sift.retrieval.keyword.scoring import Query, Scored, bounds, scored, within
+from sift.retrieval.keyword.lists import Opened, PostingArrays, StoredList, stored
+from sift.retrieval.keyword.scoring import ListReads, Query, plan_of
 from sift.storage.keyword_lists import gone, living, prefixed
 
 
@@ -49,132 +47,6 @@ class FoundChunk:
     chunk: ChunkId
     document: DocumentId
     score: float
-
-
-@dataclass(frozen=True, slots=True)
-class Pass:
-    store: Opened
-    query: Query
-    lists: Mapping[Leaf, Scored]
-    allowed: AllowedDocuments | None
-
-
-def _offer(work: Pass, best: Best, places: Ids, scores: Scores) -> Best:
-    if not len(places):
-        return best
-    chunks, held = owners(work.store, places)
-    if work.allowed is not None:
-        keep = work.allowed.documents(held)
-        chunks, held, scores = chunks[keep], held[keep], scores[keep]
-    return offered(best, chunks, held, scores)
-
-
-def _lazy(work: Pass, threshold: float) -> list[Leaf]:
-    ascending = sorted(work.query.leaves, key=work.query.most) if work.query.flat else []
-    return ascending[: unreached_alone(np.array([work.query.most(leaf) for leaf in ascending]), threshold)]
-
-
-def _summed(query: Query, held: Mapping[Leaf, Scores], size: int) -> Scores:
-    total = np.zeros(size)
-    for leaf in query.leaves:
-        if leaf in held:
-            total = total + query.bounding[leaf] * held[leaf]
-    return total
-
-
-def _held_at(found: dict[Leaf, tuple[Ids, Scores]]) -> tuple[Ids, dict[Leaf, Scores]]:
-    every = [here for here, _ in found.values()]
-    places, where = np.unique(np.concatenate([np.zeros(0, np.int64), *every]), return_inverse=True)
-    held: dict[Leaf, Scores] = {}
-    at = 0
-    for leaf, (here, scores) in found.items():
-        held[leaf] = np.zeros(len(places))
-        held[leaf][where[at : at + len(here)]] = scores
-        at += len(here)
-    return places, held
-
-
-def _with_lazy(
-    work: Pass, best: Best, places: Ids, held: dict[Leaf, Scores], lazy: list[Leaf]
-) -> tuple[Ids, dict[Leaf, Scores]]:
-    query, shift = work.query, work.store.shape.range_shift
-    lazy = sorted(lazy, key=query.most, reverse=True)
-    acc = _summed(query, held, len(places))
-    for n, leaf in enumerate(lazy):
-        near = np.flatnonzero(may_reach(acc + sum(query.most(other) for other in lazy[n:]), best.threshold))
-        places, acc, held = places[near], acc[near], {key: value[near] for key, value in held.items()}
-        found = np.zeros(len(places))
-        here, scores = within(work.store, query, work.lists[leaf], distinct(Ascending(places >> shift)).values)
-        at = np.minimum(np.searchsorted(here, places), max(len(here) - 1, 0))
-        hit = np.flatnonzero(among(places, Ascending(here)))
-        found[hit] = scores[at[hit]]
-        held[leaf] = found
-        acc = acc + query.bounding[leaf] * found
-    return places, held
-
-
-def _all_of(work: Pass, best: Best, group: Ids) -> Best:
-    query, shift = work.query, work.store.shape.range_shift
-    places, held = np.zeros(0, np.int64), {}
-    for n, leaf in enumerate(sorted(query.leaves, key=lambda each: work.lists[each].size)):
-        here, scores = within(
-            work.store, query, work.lists[leaf], group if n == 0 else distinct(Ascending(places >> shift)).values
-        )
-        if n == 0:
-            places, held = here, {leaf: scores}
-            continue
-        at = np.minimum(np.searchsorted(here, places), max(len(here) - 1, 0))
-        hit = np.flatnonzero(among(places, Ascending(here)))
-        places, held = places[hit], {key: value[hit] for key, value in held.items()} | {leaf: scores[at[hit]]}
-    acc = _summed(query, held, len(places))
-    keep = np.flatnonzero(acc >= best.threshold)
-    return _offer(work, best, places[keep], acc[keep])
-
-
-def _scored_group(work: Pass, best: Best, group: Ids) -> Best:
-    query = work.query
-    if query.conjunction:
-        return _all_of(work, best, group)
-    lazy = _lazy(work, best.threshold)
-    eager = [leaf for leaf in query.leaves if leaf not in lazy]
-    found = {leaf: within(work.store, query, work.lists[leaf], group) for leaf in eager}
-    if not any(len(places) for places, _ in found.values()):
-        return best
-    places, held = _held_at(found)
-    if query.flat:
-        places, held = _with_lazy(work, best, places, held, lazy)
-        acc = _summed(query, held, len(places))
-        keep = np.flatnonzero((acc >= best.threshold) & (acc > 0))
-        return _offer(work, best, places[keep], acc[keep])
-    holds, counting = counted(query.expression, {leaf: scores > 0 for leaf, scores in held.items()})
-    acc = np.zeros(len(places))
-    for leaf, where in counting:
-        acc += np.where(where, query.weight[leaf] * held[leaf], 0.0)
-    keep = np.flatnonzero(holds & (acc >= best.threshold))
-    return _offer(work, best, places[keep], acc[keep])
-
-
-def _searched(work: Pass, best: Best, tuning: Tuning, expired: Expired) -> Searched:
-    first, bound, present = bounds(work.query, work.lists)
-    candidates = np.flatnonzero(may_hold(work.query.expression, present) & (bound > 0))
-    remaining, bound = candidates + first, bound[candidates]
-    batch, began = tuning.first_batch, False
-    while len(remaining):
-        beat = may_reach(bound, best.threshold)
-        remaining, bound = remaining[beat], bound[beat]
-        if began and len(remaining) and len(best.chunks) and expired():
-            return Searched(best, cut=True)
-        if len(remaining) > batch:
-            pick = np.argpartition(-bound, batch - 1)[:batch]
-            rest = np.ones(len(remaining), np.bool_)
-            rest[pick] = False
-            group, remaining, bound = remaining[pick], remaining[rest], bound[rest]
-        else:
-            group, remaining, bound = remaining, remaining[:0], bound[:0]
-        if len(group):
-            best, began = _scored_group(work, best, np.sort(group)), True
-        batch = min(2 * batch, tuning.most_batch)
-    return Searched(best, cut=False)
 
 
 def _tokens(unique: Sequence[Leaf]) -> list[str]:
@@ -259,8 +131,12 @@ def query_of(expression: Expression, each: Sequence[Prepared]) -> Query | None:
 
 
 def searched(held: Prepared, query: Query, best: Best, tuning: Tuning = TUNING, expired: Expired = never) -> Searched:
-    lists = {leaf: scored(held.store, query, held.lists[leaf]) for leaf in query.leaves}
-    return _searched(Pass(held.store, query, lists, held.allowed), best, tuning, expired)
+    plan, parts = plan_of(held.store, query, held.lists, best, (tuning.first_batch, tuning.most_batch))
+    reads = ListReads(held.store, parts, best, held.allowed, expired)
+    cut, tables = pruned.scored(plan, reads)
+    for segment, table in zip(held.store.segments, tables, strict=True):
+        held.store.decoded.lengths[segment.id] = table
+    return Searched(reads.best, cut)
 
 
 def found_in(best: Best) -> tuple[FoundChunk, ...]:

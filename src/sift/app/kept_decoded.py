@@ -7,15 +7,15 @@ from typing import cast
 
 from sift.api.ids import CollectionId
 from sift.app.resident import KeywordsAt
-from sift.domain.arrays import Ids
-from sift.retrieval.keyword.lists import DecodedLists, Dense, PostingArrays, held_bytes
+from sift.domain.codec.postings import HeldBlock, HeldTable, Kept, kept_bytes
+from sift.retrieval.keyword.lists import DecodedLists
 
 KEPT_BYTES = 512 << 20
 ENTRY_BYTES = 512
 LENGTHS = "lengths"
 BLOCKS = "blocks"
 
-type Decoded = Dense | PostingArrays
+type Decoded = Kept
 type EntryKey = tuple[Path, CollectionId, int, str, Hashable]
 
 
@@ -45,12 +45,15 @@ class KeptDecoded:
             return found[0]
 
     def put(self, at: KeywordsAt, key: EntryKey, value: Decoded) -> None:
-        size = held_bytes(value) + ENTRY_BYTES
+        size = kept_bytes(value) + ENTRY_BYTES
         with self.lock:
-            if size > self.budget or self.generations.get((at.store, at.collection)) != at.generation:
+            if self.generations.get((at.store, at.collection)) != at.generation:
                 return
             replaced = self.entries.pop(key, None)
-            self.size += size - (0 if replaced is None else replaced[1])
+            self.size -= 0 if replaced is None else replaced[1]
+            if size > self.budget:
+                return
+            self.size += size
             self.entries[key] = (value, size)
             while self.size > self.budget:
                 _, (_, dropped) = self.entries.popitem(last=False)
@@ -68,7 +71,7 @@ class KeptDecoded:
 
 
 @dataclass(frozen=True, slots=True)
-class _KeptView[K: Hashable, V: (Dense, tuple[Ids, Ids])]:
+class _KeptView[K: Hashable, V: (HeldTable, HeldBlock)]:
     kept: KeptDecoded
     at: KeywordsAt
     kind: str

@@ -23,6 +23,9 @@ versions follow [Semantic Versioning](https://semver.org/). Releases before 2.0 
   takes about half as long.
 - A search reads the vectors, passages and texts it needs ahead on a few connections of its own at once, then reads
   them in its own transaction: rows not yet in memory are waited for side by side instead of one after another.
+- Keyword search scores in the compiled extension, without holding Python's interpreter lock: searches running at
+  once, such as the queries of one MCP call, no longer wait for each other, and a search spends about half the CPU
+  time it did. Hits and their scores are unchanged.
 
 ## [2.0.0] - 2026-11-28
 

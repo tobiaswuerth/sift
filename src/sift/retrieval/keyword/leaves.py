@@ -5,7 +5,8 @@ from typing import NoReturn
 import numpy as np
 
 from sift.api.errors import InvalidRequestError
-from sift.domain.arrays import Ascending, Ids, among, ascending, distinct, last, total
+from sift.domain.arrays import Ascending, Ids, among, ascending, distinct, total
+from sift.domain.codec.postings import ranges_in
 from sift.domain.query.expressions import Phrase, Prefix
 from sift.domain.rank.phrases import merged, phrase_counts
 from sift.domain.text.wording import counted
@@ -53,14 +54,15 @@ def _union(store: Opened, lists: list[StoredList], expired: Expired = never) -> 
 
 
 def size(lists: list[StoredList]) -> int:
-    return sum(len(held.places) if isinstance(held, Whole) else last(held.ranges.ends) for held in lists)
+    return sum(len(held.places) if isinstance(held, Whole) else held.chunks for held in lists)
 
 
 def _within(store: Opened, held: StoredList, candidates: Ids) -> Ids:
     if isinstance(held, Whole):
         return held.places
-    chosen = np.flatnonzero(among(held.ranges.ids, distinct(Ascending(candidates >> store.shape.range_shift))))
-    return postings_in(store, held, chosen)[0]
+    ranges = ranges_in(held.ranges)
+    chosen = np.flatnonzero(among(ranges.ids, distinct(Ascending(candidates >> store.shape.range_shift))))
+    return postings_in(store, held, ranges, chosen)[0]
 
 
 def _rarest_first(phrase: Phrase, lists: dict[str, list[StoredList]]) -> list[str]:
@@ -111,13 +113,14 @@ def materialized(
 
 
 def _ranges(store: Opened, held: StoredList) -> Ids:
-    return held.ranges.ids if isinstance(held, Ranged) else held.places >> store.shape.range_shift
+    return ranges_in(held.ranges).ids if isinstance(held, Ranged) else held.places >> store.shape.range_shift
 
 
-def _inside(store: Opened, held: StoredList, ranges: Ascending) -> int:
+def _inside(store: Opened, held: StoredList, wanted: Ascending) -> int:
     if isinstance(held, Ranged):
-        return total((held.ranges.ends - held.ranges.starts)[among(held.ranges.ids, ranges)])
-    return int(np.count_nonzero(among(held.places >> store.shape.range_shift, ranges)))
+        ranges = ranges_in(held.ranges)
+        return total((ranges.ends - ranges.starts)[among(ranges.ids, wanted)])
+    return int(np.count_nonzero(among(held.places >> store.shape.range_shift, wanted)))
 
 
 def reads_of(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]]) -> int:

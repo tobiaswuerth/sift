@@ -2,20 +2,20 @@ import dataclasses
 import threading
 from pathlib import Path
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
 from sift.api.ids import CollectionId
 from sift.api.links import FindMentions
 from sift.api.search import SearchHybrid, SearchKeywords
-from sift.app.kept_decoded import ENTRY_BYTES, Decoded, KeptDecoded
+from sift.app.kept_decoded import ENTRY_BYTES, KeptDecoded
 from sift.app.mentions import mentions
 from sift.app.query import query
 from sift.app.resident import KeywordsAt
 from sift.app.search import search
 from sift.app.searching import Watching
-from sift.retrieval.keyword.lists import Dense, PostingArrays
+from sift.domain.codec.postings import HeldBlock, blocked_within, ranges_kept
+from sift.domain.codec.shape import Shape
+from tests.coded_lists import block, ranges
 from tests.files import write
 from tests.homes import home_of, indexed
 from tests.models import Hashed
@@ -25,8 +25,10 @@ A = KeywordsAt(Path("a.sqlite"), CollectionId(2), 1)
 B = KeywordsAt(Path("b.sqlite"), CollectionId(3), 1)
 
 
-def arrays(n: int) -> PostingArrays:
-    return np.arange(n, dtype=np.int64), np.ones(n, np.int64)
+def arrays(n: int) -> HeldBlock:
+    (held,) = ranges_kept([ranges([0], [n], [9])], [(0, 0, n)])
+    (found,) = blocked_within([block(list(range(n)), [1] * n)], [0], held, Shape())
+    return found
 
 
 def test_decoded_blocks_are_kept_to_a_budget_of_bytes_the_longest_unused_let_go_first() -> None:
@@ -46,6 +48,15 @@ def test_a_block_larger_than_the_budget_is_not_kept() -> None:
     blocks[1, "small", 0] = arrays(2)
     blocks[1, "large", 0] = arrays(20)
     assert (blocks.get((1, "large", 0)), kept.size) == (None, 32 + ENTRY_BYTES)
+
+
+def test_a_value_kept_again_grown_past_the_budget_is_let_go() -> None:
+    kept = KeptDecoded(budget=100 + ENTRY_BYTES)
+    blocks = kept(A).blocks
+    blocks[1, "grows", 0] = arrays(2)
+    assert kept.size == 32 + ENTRY_BYTES
+    blocks[1, "grows", 0] = arrays(20)
+    assert (blocks.get((1, "grows", 0)), kept.size, len(kept.entries)) == (None, 0, 0)
 
 
 def test_what_a_store_held_at_another_generation_is_let_go_and_other_stores_keep_theirs() -> None:
@@ -118,25 +129,19 @@ def test_searches_through_what_was_decoded_find_what_they_find_alone_and_follow_
     assert len(search(home, SearchKeywords("robot"), watching).hits) == 2
 
 
-def arrays_of(value: Decoded) -> tuple[NDArray[np.generic], ...]:
-    if isinstance(value, Dense):
-        return value.numbers, value.table, value.order, value.blocks.values
-    return value
-
-
 def test_many_small_decoded_lists_are_held_to_the_budget_with_what_each_entry_costs() -> None:
     kept = KeptDecoded(budget=100_000)
     blocks = kept(A).blocks
     for n in range(10_000):
-        blocks[1, f"w{n}", 0] = (np.zeros(1, np.int64), np.zeros(0, np.int64))
+        blocks[1, f"w{n}", 0] = arrays(1)
     assert (len(kept.entries) <= 100_000 // ENTRY_BYTES, 0 < kept.size <= kept.budget) == (True, True)
 
 
 def test_what_is_kept_cannot_be_written(home: Path) -> None:
     kept = KeptDecoded()
     search(home, SearchKeywords('"robot plans" OR halo'), Watching(decoded=kept))
-    arrays_kept = [array for value, _ in kept.entries.values() for array in arrays_of(value)]
-    assert len(arrays_kept) == 4
-    for array in arrays_kept:
-        with pytest.raises(ValueError, match="WRITEABLE"):
-            array.flags.writeable = True
+    values = [value for value, _ in kept.entries.values()]
+    assert len(values) == 1
+    for value in [*values, arrays(3)]:
+        with pytest.raises(AttributeError):
+            object.__setattr__(value, "ids", None)

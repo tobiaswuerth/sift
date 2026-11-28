@@ -11,6 +11,7 @@ MOST_LINES = 400
 LAYERS = (
     "numbers",
     "packed",
+    "ranges",
     "lists",
     "packs",
     "words",
@@ -19,6 +20,10 @@ LAYERS = (
     "merge",
     "phrases",
     "unions",
+    "scoring",
+    "reading",
+    "groups",
+    "search",
     "hamming",
     "clusters",
     "python",

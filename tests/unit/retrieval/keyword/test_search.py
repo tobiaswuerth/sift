@@ -5,7 +5,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.arrays import ints, last
+from sift.domain.arrays import ints
 from sift.domain.codec.shape import Shape
 from sift.domain.plan.segments import Policy
 from sift.domain.query.expressions import NOTHING, And, Expression, Or, Term
@@ -192,7 +192,7 @@ def test_most_blocks_of_a_common_term_are_never_read(seed: int) -> None:
         search(stores, Term("w0"), 1, tuning=Tuning(first_batch=2))
         read = len(blocks_read(store))
         lists = [held for held in stored(store, ["w0"])["w0"] if isinstance(held, Ranged)]
-        total = sum(-(-last(held.ranges.ends) // store.shape.block) for held in lists)
+        total = sum(-(-held.chunks // store.shape.block) for held in lists)
         assert 0 < read < total / 3
 
 

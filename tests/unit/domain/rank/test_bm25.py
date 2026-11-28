@@ -9,9 +9,10 @@ from hypothesis import strategies as st
 
 from sift.domain.arrays import floats
 from sift.domain.errors import DamagedError
-from sift.domain.rank.bm25 import idf, slack, term_scores
+from sift.domain.rank.bm25 import idf, slack
 from sift.domain.text.tokens import tokens
 from tests.examples import more
+from tests.scores import term_scores
 
 WORDS = ("alpha", "beta", "gamma", "delta", "Müller", "x-ray")
 column = st.lists(st.sampled_from(WORDS), max_size=8).map(" ".join)
@@ -63,11 +64,4 @@ def test_counts_no_index_can_hold_are_damage() -> None:
     with pytest.raises(DamagedError, match="counts a word in more passages than it holds"):
         idf(1, 2)
     with pytest.raises(DamagedError, match="holds words in passages of no length"):
-        term_scores(np.array([1], np.int64), np.array([1], np.int64), 0.0)
-    with pytest.raises(DamagedError, match="holds words in passages of no length"):
         slack(1.0, 0.0)
-
-
-def test_no_passage_to_score_scores_nothing_whatever_the_average() -> None:
-    none = np.zeros(0, np.int64)
-    assert term_scores(none, none, 0.0).shape == (0,)

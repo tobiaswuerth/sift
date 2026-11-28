@@ -6,6 +6,7 @@ from numpy.typing import NDArray
 
 STORED_U32 = np.dtype("<u4")
 STORED_I64 = np.dtype("<i8")
+STORED_F64 = np.dtype("<f8")
 STORED_HALF = np.dtype("<f2")
 
 type Ids = NDArray[np.int64]
@@ -19,6 +20,10 @@ def whole(values: Ids) -> Ids:
 
 def integers(stored: bytes) -> Ids:
     return np.frombuffer(stored, STORED_I64).astype(np.int64, copy=False)
+
+
+def reals(stored: bytes) -> Scores:
+    return np.frombuffer(stored, STORED_F64).astype(np.float64, copy=False)
 
 
 def read_only[T: np.generic](values: NDArray[T]) -> NDArray[T]:
@@ -80,11 +85,3 @@ def among(values: Ids, held: Ascending) -> Mask:
 
 def distinct(held: Ascending) -> Ascending:
     return Ascending(held.values[firsts(held.values)])
-
-
-def either(masks: list[Mask]) -> Mask:
-    return cast("Mask", np.logical_or.reduce(masks))
-
-
-def every(masks: list[Mask]) -> Mask:
-    return cast("Mask", np.logical_and.reduce(masks))

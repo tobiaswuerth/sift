@@ -1,6 +1,7 @@
 import contextlib
 import itertools
 import zlib
+from typing import cast
 
 import numpy as np
 import pytest
@@ -11,19 +12,32 @@ from numpy.typing import NDArray
 from sift.domain.arrays import ints
 from sift.domain.codec.postings import (
     PACKED,
-    RANGES_HEAD,
     RAW,
+    Kept,
     Ranges,
     blocked_all,
     blocked_within,
+    kept_bytes,
     lengths_all,
     occurrences,
-    ranges_of,
+    postings_of,
+    ranges_in,
+    ranges_kept,
     with_lengths,
 )
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
-from tests.coded_lists import BLOCK_HEAD, block, blocked, placed, positions_of, ranges, varint, varints
+from tests.coded_lists import (
+    BLOCK_HEAD,
+    RANGES_HEAD,
+    block,
+    blocked,
+    placed,
+    positions_of,
+    ranges,
+    varint,
+    varints,
+)
 from tests.unit.domain.codec.built import SMALL, of_bodies, segment, short_lists
 
 
@@ -32,6 +46,11 @@ def ascending(gaps: list[int], start: int) -> NDArray[np.int64]:
 
 
 type Listed = list[tuple[int, list[int]]]
+
+
+def ranges_of(data: bytes, most: int, chunks: int = 0) -> Ranges:
+    return ranges_in(ranges_kept([data], [(0, most - 1, chunks)])[0])
+
 
 posting = st.tuples(
     st.integers(1, (1 << 32) - 1), st.lists(st.integers(0, 1 << 30), min_size=1, max_size=8, unique=True)
@@ -114,7 +133,8 @@ def test_ranges_hold_where_their_postings_start_and_end_and_their_best_scores(
 ) -> None:
     found = ascending(data.draw(st.lists(st.integers(1, 1000), min_size=len(counts), max_size=len(counts))), first)
     best = data.draw(st.lists(st.integers(0, 255), min_size=len(counts), max_size=len(counts)))
-    back = ranges_of(ranges(ints(found), counts, best), len(counts))
+    (held,) = ranges_kept([ranges(ints(found), counts, best)], [(first, ints(found)[-1], sum(counts))])
+    back = ranges_in(held)
     assert ints(back.ids) == ints(found)
     assert ints(back.ends - back.starts) == counts
     assert ints(back.starts) == [0, *ints(back.ends[:-1])]
@@ -211,6 +231,14 @@ def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -
         ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(4) + bytes(4)), 9)
     with pytest.raises(DamagedError, match="a packed list holds bytes after its end"):
         ranges_of(ranges([0, 1, 2], [2, 1, 2], [9, 9, 9]) + bytes(1), 3)
+    held = ranges([4, 5, 9], [2, 1, 2], [9, 9, 9])
+    for low, high in ((5, 9), (4, 8)):
+        with pytest.raises(DamagedError, match="the ranges of a list lie outside its segment"):
+            ranges_kept([held], [(low, high, 5)])
+    with pytest.raises(DamagedError, match="the ranges of a list hold 5 passages, not its 6"):
+        ranges_kept([held], [(4, 9, 6)])
+    with pytest.raises(DamagedError, match="a list is read with a segment and a count for each"):
+        ranges_kept([held], [])
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
         lengths_all([zlib.compress(bytes(7))], 6)
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
@@ -249,6 +277,8 @@ def test_the_lengths_of_many_blocks_come_back_as_a_row_for_each_and_of_none_as_n
     assert (table.shape, table.dtype) == ((100, 64), np.uint32)
     assert ints(table.reshape(-1)) == ints(blocks % 977 + 1)
     assert lengths_all([], 6).shape == (0, 64)
+    with pytest.raises(TypeError, match="neither a block of postings nor a table of lengths"):
+        kept_bytes(cast("Kept", object()))
 
 
 def test_the_positions_of_the_passages_wanted_come_back_from_many_blocks_as_each_block_holds_them() -> None:
@@ -278,15 +308,14 @@ def test_the_positions_of_the_passages_wanted_come_back_from_many_blocks_as_each
 
 def test_the_blocks_of_a_list_come_back_each_alone_and_one_its_ranges_do_not_place_is_refused() -> None:
     shape = Shape(range_shift=2, block=2, long=3, lengths_shift=3)
-    held = ranges_of(ranges([0, 1, 2], [2, 1, 2], [9, 9, 9]), 3)
+    (held,) = ranges_kept([ranges([0, 1, 2], [2, 1, 2], [9, 9, 9])], [(0, 2, 5)])
     rows = [block([0, 1], [1, 3]), block([5, 9], [2, 1]), block([10], [4])]
     found = blocked_within(rows, [0, 1, 2], held, shape)
-    assert [(ints(places), ints(counts)) for places, counts in found] == [
-        ([0, 1], [1, 3]),
-        ([5, 9], [2, 1]),
-        ([10], [4]),
-    ]
+    assert [ints(each) for each in postings_of(found)[:2]] == [[0, 1, 5, 9, 10], [1, 3, 2, 1, 4]]
+    assert postings_of(found)[2] == [0, 2, 4, 5]
+    assert [kept_bytes(each) for each in found] == [32, 32, 16]
     assert blocked_within([], [], held, shape) == []
+    assert [len(each) for each in postings_of([])] == [0, 0, 1]
     with pytest.raises(DamagedError, match="a block holds postings outside its ranges"):
         blocked_within(rows[1:2], [0], held, shape)
     with pytest.raises(DamagedError, match="a block holds 1 postings where its ranges place 2"):
@@ -308,7 +337,7 @@ def test_a_passage_longer_than_a_length_keeps_is_refused() -> None:
 
 def test_a_list_that_unpacks_to_more_than_its_kind_may_hold_is_refused_once_it_has_unpacked_that_far() -> None:
     held = ranges([0, 1, 2], [2, 1, 2], [9, 9, 9])
-    assert ints(ranges_of(held, 3).ids) == [0, 1, 2]
+    assert ints(ranges_of(held, 3, 5).ids) == [0, 1, 2]
     far = zlib.compress(bytes(1 << 26))
     for packed in (held, far):
         with pytest.raises(DamagedError, match="unpacks to more than 20 bytes"):
