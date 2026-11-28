@@ -11,6 +11,11 @@ versions follow [Semantic Versioning](https://semver.org/). Releases before 2.0 
 - In a terminal that shows colours, `sift worker` printed the colour codes of its hint on where to set
   `SIFT_EMBED_REMOTE` as text (`\x1b[2m…\x1b[0m`) instead of dimming it.
 
+### Changed
+
+- Semantic and hybrid search scan the vectors' codes in the compiled extension, on all cores and without copying
+  them: over tens of millions of passages, that part of a search takes about half as long.
+
 ## [2.0.0] - 2026-11-28
 
 A rebuild of sift: a new store layout, a keyword index of its own built by a compiled Rust core, and a home process

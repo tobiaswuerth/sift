@@ -1,6 +1,4 @@
-import itertools
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -11,63 +9,35 @@ from sift.api.ids import ChunkId
 from sift.domain.arrays import Ids, Mask, ascending, distinct, floats, ints, last, read_only
 from sift.domain.codec.codes import (
     MOST_BITS,
-    WORD_BYTES,
-    Bits,
     Floats,
     Halves,
-    Words,
+    HeldCodes,
     bit_scores,
     code_bytes,
     code_of,
-    distances,
-    width_of,
-    words,
+    measured,
+    rows_of,
 )
 from sift.retrieval.allowed import AllowedChunks
 
 MOST_RESCORED = 1000
 SHORTLIST = 10
-CODES_AXES = 2
 SCAN_SHARE = 0.2
 MARGIN = 1.25
-SCANNING = 8
-PART_ROWS = 32_768
 
 type ExactRead = Callable[[int, Ids], tuple[Ids, Halves]]
-
-
-class ScanPart(NamedTuple):
-    number: int
-    store: int
-    rows: range
-    at: int
-
-
-type Spread = Callable[[Callable[[ScanPart], None], Sequence[ScanPart]], None]
-
-
-def over_threads(scan: Callable[[ScanPart], None], parts: Sequence[ScanPart]) -> None:
-    if len(parts) <= 1:
-        for part in parts:
-            scan(part)
-        return
-    with ThreadPoolExecutor(min(SCANNING, len(parts))) as pool:
-        for _ in pool.map(scan, parts):
-            pass
 
 
 @dataclass(frozen=True, slots=True)
 class Reads:
     exact: ExactRead
     allowed: Sequence[AllowedChunks | None] = ()
-    spread: Spread = over_threads
 
 
 @dataclass(eq=False, frozen=True, slots=True)
 class Coded:
     ids: Ids
-    bits: Bits
-    words: Words
+    codes: HeldCodes
     width: int
 
 
@@ -83,12 +53,12 @@ class Candidates:
     rows: Ids
 
 
-def coded(ids: Ids, bits: Bits, width: int) -> Coded:
-    if bits.dtype != np.uint8 or bits.ndim != CODES_AXES or len(bits) != len(ids):
-        raise ValueError("codes are a uint8 matrix of a row a chunk: code them so")
-    if len(ids) and not (0 < width <= MOST_BITS and width_of(bits) == code_bytes(width)):
+def coded(ids: Ids, codes: HeldCodes, width: int) -> Coded:
+    if codes.rows != len(ids):
+        raise ValueError("codes hold a row a chunk: code them so")
+    if len(ids) and not (0 < width <= MOST_BITS and codes.size == code_bytes(width)):
         raise ValueError(f"codes of {width:,} dimensions are {code_bytes(width)} bytes each: code them so")
-    return Coded(read_only(ids), read_only(bits), read_only(words(bits)), width)
+    return Coded(read_only(ids), codes, width)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -125,31 +95,9 @@ class Measured:
         return found
 
 
-def _parts(sizes: Sequence[int]) -> list[ScanPart]:
-    rows = max(PART_ROWS, -(-sum(sizes) // SCANNING))
-    firsts = itertools.accumulate(sizes, initial=0)
-    placed = [
-        (store, range(start, min(start + rows, size)), first + start)
-        for store, (size, first) in enumerate(zip(sizes, firsts, strict=False))
-        for start in range(0, size, rows)
-    ]
-    return [ScanPart(number, *each) for number, each in enumerate(placed)]
-
-
-def _measured(held: Sequence[Coded], query: Floats, spread: Spread) -> Measured:
-    asked = code_of(query)
-    sizes = tuple(len(each.ids) for each in held)
-    distance = np.empty(sum(sizes), np.uint16)
-    parts = _parts(sizes)
-    counted = np.zeros((len(parts), 8 * WORD_BYTES * len(asked) + 1), np.int64)
-
-    def scan(part: ScanPart) -> None:
-        found = distances(held[part.store].words[part.rows.start : part.rows.stop], asked)
-        distance[part.at : part.at + len(part.rows)] = found
-        counted[part.number] = np.bincount(found, minlength=width_of(counted))
-
-    spread(scan, parts)
-    return Measured(distance, tuple(each.ids for each in held), sizes, counted.sum(axis=0))
+def _measured(held: Sequence[Coded], query: Floats) -> Measured:
+    distance, counted = measured([each.codes for each in held], code_of(query))
+    return Measured(distance, tuple(each.ids for each in held), tuple(len(each.ids) for each in held), counted)
 
 
 def _candidates(found: Measured, at: Ids) -> Candidates:
@@ -208,7 +156,7 @@ def _passing(held: Sequence[Coded], found: Measured, want: int, allowed: Sequenc
 
 
 def _shortlist(held: Sequence[Coded], query: Floats, want: int, reads: Reads) -> Candidates:
-    found = _measured(held, query, reads.spread)
+    found = _measured(held, query)
     allowed = reads.allowed
     among = _passing(held, found, want, allowed) if any(each is not None for each in allowed) else None
     return _nearest_of(found, among, want)
@@ -221,7 +169,7 @@ def _by_bits(held: Sequence[Coded], query: Floats, short: Candidates, want: int)
     for store, each in enumerate(held):
         mine = np.equal(short.owners, store)
         if mine.any():
-            scores[mine] = bit_scores(each.bits[short.rows[mine]], query)
+            scores[mine] = bit_scores(rows_of(each.codes, short.rows[mine]), query)
     best = np.lexsort((short.ids, -scores))[:want]
     return Candidates(short.ids[best], short.owners[best], short.rows[best])
 

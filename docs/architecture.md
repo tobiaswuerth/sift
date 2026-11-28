@@ -65,9 +65,10 @@ diacritics removed, reproduced exactly as a table of every code point's separato
   the model as it is. If compiling fails, the model runs as it is too; where the installed Triton is another minor
   release than the one PyTorch's metadata names, sift says which to install.
 - Each vector's signs, one bit per dimension, are held in memory: 96 bytes for 768 dimensions. A query is compared with
-  every code by Hamming distance, without an index to build or tune. The nearest 10,000 are ranked again by the
-  query's own floats against their bits, and the best 1,000 are scored exactly with their vectors. A search for more
-  than 250 hits scores four times as many as it asks for, rounded up to a thousand, and shortlists ten times that.
+  every code by Hamming distance, without an index to build or tune: the compiled extension scans every code on all
+  cores, reading them where they lie. The nearest 10,000 are ranked again by the query's own floats against their bits,
+  and the best 1,000 are scored exactly with their vectors. A search for more than 250 hits scores four times as many as
+  it asks for, rounded up to a thousand, and shortlists ten times that.
 - A filter on front matter is checked for the nearest candidates first, a batch at a time, until enough pass; one that
   lets few through is listed instead.
 

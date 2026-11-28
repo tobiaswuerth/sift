@@ -1,5 +1,6 @@
 mod building;
 mod clusters;
+mod codes;
 mod lists;
 mod merging;
 
@@ -52,6 +53,9 @@ fn listed<'py>(py: Python<'py>, segment: i64, filed: &Filed) -> PyResult<Listed<
 #[pymodule(name = "_native")]
 fn native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(clusters::nearest_centroids, module)?)?;
+    module.add_class::<codes::Filling>()?;
+    module.add_class::<codes::HeldCodes>()?;
+    module.add_function(wrap_pyfunction!(codes::scanned_codes, module)?)?;
     module.add_function(wrap_pyfunction!(clusters::majority_centroids, module)?)?;
     module.add_function(wrap_pyfunction!(lists::blocked_all, module)?)?;
     module.add_function(wrap_pyfunction!(lists::blocked_within, module)?)?;

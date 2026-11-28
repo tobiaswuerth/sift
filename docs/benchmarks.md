@@ -239,6 +239,11 @@ Over 10 questions each from the arXiv and FiQA pools, ms a question: 331 in one 
 
 ### Vectors in memory
 
+Scanning the codes is most of a semantic search's work once the model has embedded the question. Over 45.9
+million codes in memory, the compiled extension scans them and counts their distances on all 32 threads in 96 ms,
+where NumPy on eight threads took 250 ms, with the same distances; the whole search less the model and the exact
+vectors' reads went from 261 to 128 ms.
+
 Exact search over fp16 vectors holds 1.5 KB per 768-dimensional passage: 4.9 GB for 3.2 million, 60 GB for 40
 million. Each scheme against exact search over the 3,215,416 arXiv abstract passages (EmbeddingGemma-2), for 2,000
 known-item title queries: recall@k is the share of exact search's top k found; MRR@10 and hit@10 are each paper's own.
