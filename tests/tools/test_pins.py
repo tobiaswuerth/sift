@@ -3,6 +3,7 @@ import json
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from typing import final, override
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -155,7 +156,7 @@ def test_every_pin_of_the_wheels_workflow_is_asked_about() -> None:
         return tags(("2000.01.01-1", OLD, 30 * DAY))
 
     found = list(behind(read(WORKFLOW), answered, NOW))
-    assert sum("quay.io" in url for url in asked) == 2
+    assert sum(urlsplit(url).hostname == "quay.io" for url in asked) == 2
     assert sum("rustup-init.sha256" in url for url in asked) == 4
     assert [finding.path for finding in found] == [WORKFLOW] * 4
     assert all(finding.line > 1 for finding in found)
