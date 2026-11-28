@@ -12,8 +12,9 @@ The rest of this page addresses the agent.
 sift indexes folders of documents on this machine and serves keyword, semantic and hybrid search over them as an MCP
 server. You are done when the folders the user named are indexed and embedded, `sift serve` runs, and a new session of
 the user's agent lists sift's tools. sift reads the user's files and never writes to them: what it writes lies under
-`SIFT_HOME` (`~/.sift`), or where `sift add --store` puts a store, and the models it downloads in Hugging Face's
-cache (`~/.cache/huggingface`).
+`SIFT_HOME` (`~/.sift`) or where `sift add --store` puts a store, plus the home process's file in the user's state
+folder (`%LOCALAPPDATA%\sift` on Windows, `$XDG_STATE_HOME/sift` or `~/.local/state/sift` elsewhere) and the models it
+downloads into Hugging Face's cache (`~/.cache/huggingface`).
 
 ## Ask first
 
@@ -22,18 +23,19 @@ Ask the user, in one message, what only they know:
 1. Which folders to index, and a short name for each (`notes`, `handbook`).
 2. Whether another machine's GPU should embed for this one (then set that up first: [worker.md](worker.md)).
 
-Index no home folder and no whole drive unasked. sift reads every file it has a reader for, and every program running
-on this machine can search and read all of it through the server, which listens on this machine alone.
+Index no home folder and no whole drive unasked. sift reads every file it has a reader for, and every program running on
+this machine can search and read all of it through the server, which listens only on this machine.
 
 ## Steps
 
 Read what each command prints: sift says what it did, what it left out and what to run next (on stderr; results are
 on stdout).
 
-1. **Check the machine.** sift needs Python 3.12 or newer; [uv](https://docs.astral.sh/uv/) installs it best
-   (`uv --version`), and brings a Python of its own. Without uv, ask the user before you install it, as
-   [its documentation](https://docs.astral.sh/uv/getting-started/installation/) says. sift uses an NVIDIA GPU if there
-   is one, else an Apple GPU, else the CPU, which is much slower at embedding and at `query`.
+1. **Check the machine.** sift needs Python 3.12 or newer with SQLite 3.38 or newer. [uv](https://docs.astral.sh/uv/) is
+   the best way to install it (check with `uv --version`), and brings a Python of its own. Without uv, ask the user
+   before you install it, as [its documentation](https://docs.astral.sh/uv/getting-started/installation/) says. sift
+   uses an NVIDIA GPU if there is one, else an Apple GPU, else the CPU, which is much slower at embedding and at
+   `query`.
 
 2. **Install.**
 
@@ -57,7 +59,7 @@ on stdout).
      ([usage](usage.md#leaving-files-out)).
    - JSON Lines with other field names than sift looks for: `--id-field`, `--title-field`, `--text-fields`
      ([usage](usage.md#json-lines)).
-   - A file that is a link to outside its folder is left out, and said. Leave that so unless the user asks for
+   - A file that is a link to outside its folder is left out, and reported. Keep it that way unless the user asks for
      `--follow-links`: such a link may lead to any file of the machine.
 
 4. **Index, then embed.**
@@ -68,8 +70,8 @@ on stdout).
    ```
 
    The first `sift embed` downloads the embedding model from Hugging Face, the first `query` the reranker (about
-   2 GB together). Both commands process only what
-   changed since their last run, and `sift embed`, interrupted, goes on where it stopped. On a GPU it embeds a hundred
+   2 GB together). Both commands process only what changed since their last run, and an interrupted `sift embed`
+   continues where it stopped. On a GPU it embeds a hundred
    or more passages a second, so a large collection takes a while: run it where the user sees its progress, and don't
    let a timeout of yours end it. `sift status` shows each collection's documents, passages and how many are
    embedded; with `--json`, `contents` holds `documents`, `chunks` and `embedded`, and a collection is embedded when
@@ -81,15 +83,15 @@ on stdout).
    sift query "a question the documents answer" -k 3
    ```
 
-6. **Start the server** where it outlives your session. A command you start in your own shell ends with it, so have
-   the user run it in a terminal they keep open, or start it apart from yours:
+6. **Start the server** where it outlives your session. A command you start in your own shell ends with it, so have the
+   user run it in a terminal they keep open, or start it detached from your shell:
 
    ```bash
    sift serve    # MCP on http://127.0.0.1:8765/mcp, the browser UI on http://127.0.0.1:8765/ui
    ```
 
    ```bash
-   nohup sift serve > /dev/null 2>&1 &    # Linux and macOS: apart from this shell
+   nohup sift serve > /dev/null 2>&1 &    # Linux and macOS: detached from this shell
    ```
 
    ```powershell
@@ -98,7 +100,7 @@ on stdout).
 
    It loads the models once, at the first search that needs them, and serves any number of agents and the user's own
    `sift` commands: it is up once `http://127.0.0.1:8765/ui` answers, and what it says is in `SIFT_HOME/logs`. Another
-   port: `--port N`. To have it start with the machine, ask the user: that is their service manager's (systemd,
+   port: `--port N`. To have it start with the machine, ask the user: that is a job for their service manager (systemd,
    launchd, Task Scheduler).
 
 7. **Connect the agent.** For Claude Code, once for all projects:
@@ -119,8 +121,8 @@ on stdout).
 
 - After writing or deleting a file of a collection, call the `reindex` tool with its path: the next search finds it,
   embedded.
-- For files changed otherwise, `sift index` and then `sift embed`, as often as the user wants them current. While
-  `sift serve` runs, it does what they ask.
+- For files changed otherwise, `sift index` and then `sift embed`, as often as the user wants them current. While `sift
+  serve` runs, these commands run in it.
 - sift never updates itself; with `SIFT_UPDATE_CHECK=on` it says when a newer version is out. See
   [Updating](https://github.com/tobiaswuerth/sift#updating).
 
@@ -128,7 +130,7 @@ on stdout).
 
 - `sift rm NAME` deletes a collection's store, and `sift embed --reset` every vector: embedding again takes as long
   as the first time.
-- `sift add FOLDER --no-agents`: a collection the user searches alone, which the MCP tools neither list nor search.
+- `sift add FOLDER --no-agents`: a collection only the user searches: the MCP tools neither list nor search it.
 - `SIFT_EMBED_MODEL`: another model means `sift embed --reset`.
 
 ## When something goes wrong

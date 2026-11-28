@@ -16,7 +16,7 @@ HEAD = """\
 # Limits
 
 Every bound sift sets in its code: the most it reads, holds or sends, the fewest it needs, and how long it waits.
-Generated from the code by `python -m tools limits --write`; a test holds it equal to the code.
+Generated from the code by `python -m tools limits --write`; a test checks that it matches the code.
 
 | Module | Name | Value |
 |---|---|---|

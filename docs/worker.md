@@ -14,7 +14,7 @@ the machine using it keeps the stores and the files.
    It prints a line such as `SIFT_EMBED_REMOTE=https://<key>@workstation:8766`. By default it answers on every address
    of its machine; `--host` names one, such as the address in your own network.
 
-2. On the other machine, set that variable: `export` in bash, or in PowerShell, for new terminals:
+2. On the other machine, set that variable: with `export` in bash, or for new terminals with `setx` in PowerShell:
 
    ```powershell
    setx SIFT_EMBED_REMOTE https://<key>@workstation:8766

@@ -7,9 +7,9 @@ How sift stores what it reads and how each search ranks it. The measurements beh
 
 - `sift index` lists a collection's folder and compares each file by modification time and size, so unchanged files
   cost nothing. Documents, PDFs and mails are read in reader processes with a time limit (ten minutes, and a second
-  more for every 100 KB), since a converter's native code can crash or hang; a file that does is left out and said,
-  and read again once it changes. JSON Lines are read in the indexing process, a batch at a time, whatever the file's
-  size, and only the records that changed are stored again.
+  more for every 100 KB), since a converter's native code can crash or hang; a file that does is skipped and
+  reported, and read again once it changes. JSON Lines are read in the indexing process, a batch at a time, whatever
+  the file's size, and only the records that changed are stored again.
 - Text becomes passages of at most 3,000 characters on line boundaries, preferring headings, each overlapping the one
   before by up to 300.
 - Each collection is one SQLite database (a store) in WAL mode: documents and their text, stored once (passages are
@@ -40,8 +40,8 @@ diacritics removed, reproduced exactly as a table of every code point's separato
   it in its place in one transaction: keyword search answers throughout, and an order stopped midway is taken up by
   the next `sift index`. Eight readers, each on a connection of its own, read the passages of a batch ahead while the
   writer tokenizes and writes, as passages in a new order lie scattered over the store. They read the same way when
-  `sift index` remakes an index in place that another version of sift, or a SQLite rendering numbers otherwise, wrote;
-  keyword search refuses that store until the remake is done.
+  `sift index` remakes an index in place that another version of sift, or a SQLite that renders numbers
+  differently, wrote; keyword search refuses that store until the remake is done.
 - BM25 (k1 1.2, b 0.75) over each passage with its document's title and front-matter values. A query is answered by
   Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): the summed best scores of a range bound
   every passage in it, so ranges are scored best bound first until none left can beat the k-th best. Words that
@@ -55,8 +55,8 @@ diacritics removed, reproduced exactly as a table of every code point's separato
 
 - The embedding model runs on the GPU (NVIDIA, else Apple) or the CPU, in batches of texts of similar length, in
   bfloat16 where the GPU has it and float32 elsewhere; vectors are stored as fp16. The default models load at a commit
-  sift pins, so that what their owners push later changes no vector; a store records the model at its commit, and
-  `sift embed` refuses to mix models.
+  sift pins, so that later changes to a model's repository change no vector; a store records the model at its
+  commit, and `sift embed` refuses to mix models.
 - `sift embed` reads 16,384 passages at a time and embeds them longest first, so that a batch's texts are of similar
   length, writing each batch's vectors as soon as it is embedded; a thread cuts the next two batches' words while
   the model runs. On an NVIDIA GPU, with 20,000 passages or more to embed, it first compiles the model with PyTorch
@@ -65,7 +65,8 @@ diacritics removed, reproduced exactly as a table of every code point's separato
   the model as it is.
 - Each vector's signs, one bit per dimension, are held in memory: 96 bytes for 768 dimensions. A query is compared with
   every code by Hamming distance, without an index to build or tune. The nearest 10,000 are ranked again by the
-  query's own floats against their bits, and the best 1,000 are scored exactly with their vectors.
+  query's own floats against their bits, and the best 1,000 are scored exactly with their vectors. A search for more
+  than 250 hits scores four times as many as it asks for, rounded up to a thousand, and shortlists ten times that.
 - A filter on front matter is checked for the nearest candidates first, a batch at a time, until enough pass; one that
   lets few through is listed instead.
 

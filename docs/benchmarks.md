@@ -17,12 +17,12 @@ models run in bfloat16 on the GPU, as sift runs them.
 
 Measured on copies of seven collections, 45.7 million passages of abstracts, papers, laws and notes: PubMed 29.9
 million, OpenAlex 12.0 million, arXiv 3.3 million, bioRxiv 0.47 million, the ACL Anthology 0.09 million, Swiss
-federal law 0.08 million and a collection of notes. Another job shared the CPU (at a lower priority) and the GPU
-throughout.
+federal law 0.08 million and a collection of notes. Another workload shared the CPU (at a lower priority) and the
+GPU throughout.
 
-**Search** over all seven, every passage embedded, through `sift serve` with its models loaded, 10 hits each. Each
-row is 8 questions; a question's first call, then the median of two more that ask for 11 and 12 hits, which the home
-process's cache of results cannot answer ("warm": what they read is in memory by then):
+**Search** over all seven, every passage embedded, through `sift serve` with its models loaded, 10 hits each. Each row
+is the median over 8 questions, of each question's first call and of two more calls asking for 11 and 12 hits, which the
+home process's cache of results cannot answer ("warm": what they read is in memory by then):
 
 | Use case | Mode | First call | Warm |
 |---|---|---|---|
@@ -57,8 +57,8 @@ order:
 - **Clustering PubMed's** 29.9 million codes for its topical order took 2 min 4 s.
 - **Unchanged folders** cost a look: arXiv's 425 files were passed over in 56 ms.
 
-**Embedding**, `sift embed` of 40,579 PubMed abstracts on the GPU alone: 1,180 passages a second, after compiling
-the model for 20 s (41 s the first time, when PyTorch's cache of compiled kernels is empty).
+**Embedding**, `sift embed` of 40,579 PubMed abstracts on the GPU: 1,180 passages a second, after compiling the model
+for 20 s (41 s the first time, when PyTorch's cache of compiled kernels is empty).
 
 ## Search quality
 
@@ -179,7 +179,8 @@ With `query` (gte-reranker-modernbert-base, w = 0.5) over each model's candidate
 - **gte-reranker-modernbert-base, blended, is the best reranker under every embedding model** (worst gap 0.02–0.04).
 - **EmbeddingGemma-2 is the default:** Arctic ties it on average, and a change of default would force every index to
   be embedded again. For a new index of business documents, Arctic is a good choice.
-- **Qwen3-Embedding's LitSearch score** is out of line with its others and unexplained; it isn't held against it.
+- **Qwen3-Embedding's LitSearch score** is out of line with its other scores and unexplained, so it isn't held
+  against the model.
 
 ## Design measurements
 
@@ -309,15 +310,16 @@ distance needs. sift does both, one after the other: Hamming over all codes, the
 
 - **Reranking fewer candidates when the lists agree:** simulated on the stored scores of the pools. 20 keyword and 20
   semantic candidates instead of 40 each cost the arXiv known items 5 points of nDCG@10 and FiQA 2; doing so only when 5
-  of the top 20 agree still reranked 65 to 85% and cost 0.5 to 0.7 points. Batching by length took most of the time.
+  of the top 20 agree still reranked 65 to 85% and cost 0.5 to 0.7 points. Batching by length already saves most of that
+  time.
 - **Query expansion by the agent** (as [QMD](https://github.com/tobi/qmd) does: keywords, a rewrite, a hypothetical
   answer): MRR@10 on the arXiv known items rose from 0.936 to 0.938, one query rescued. Agents may still search several
   phrasings.
 - **int8 vectors for the exact scores:** over 500 title queries, recall@10 0.962 (a scale per vector) or 0.974 (per
   dimension) against 0.996, MRR@10 unchanged. Half the vectors' storage for three points of recall.
 - **A first scan of the first 256 dimensions' bits,** keeping the nearest P: recall@10 0.9938 keeping 100,000, 0.9954
-  keeping 300,000, against 0.9958. It would read a third of the codes but need them apart in memory (1.5 GB more at 46
-  million).
+  keeping 300,000, against 0.9958. It would read a third of the codes but need a separate copy of them in memory (1.5 GB
+  more at 46 million).
 - **Centering before the signs:** codes of v − mean found more of the top 10 by Hamming distance alone (0.9917 against
   0.9794 among the 1,000 nearest), but the float query's ranking loses it, as centered vectors differ in length: the
   whole cascade found 0.9788 instead of 0.9975.

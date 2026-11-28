@@ -12,12 +12,12 @@ uv sync
 uv run pre-commit install
 ```
 
-A Rust extension, the crate in `native/`, builds, merges and searches the lists of the keyword index and clusters
-the passages into their topical order. Install [rustup](https://rustup.rs) and a C compiler first: `uv sync` builds
-the extension, and builds it again whenever the crate changed. `rust-toolchain.toml` names the toolchain, which rustup
+A Rust extension, the crate in `native/`, builds, merges and searches the lists of the keyword index and clusters the
+passages into their topical order. Install [rustup](https://rustup.rs) and a C compiler first: `uv sync` builds the
+extension, and builds it again whenever the crate changed. `rust-toolchain.toml` names the toolchain, which rustup
 fetches on the first build. Every package carries the licences of the crates built into the extension, in
-`native/THIRD-PARTY-NOTICES`: after a change of the crate's dependencies, `python -m tools notices --write` writes
-that file anew.
+`native/THIRD-PARTY-NOTICES`: after a change of the crate's dependencies, `python -m tools notices --write` regenerates
+that file.
 
 ## The gate
 
@@ -42,14 +42,13 @@ session runs the lowest SQLite sift allows, 3.38: every Python build brings a ne
 Developer Mode first: without the right to make symbolic links the tests of linked files are skipped, and the lines
 only they run fail the coverage check.
 
-Before a release, `nox -s explore` runs the property tests with fresh random examples, 2,000 each, and 200 at least
-for those that build stores (`few` in `tests/examples.py`); the gate runs them derandomized. And `nox -s real` runs
-the default models, as the Hugging Face cache holds them or
-downloaded: it indexes a few notes and a scan with OCR, embeds them and searches them three ways, and on a CUDA GPU
-checks that the models rest and come back. Its session has CPU PyTorch; for the GPU, run
-`python -m tests.real_models` where PyTorch has CUDA. Its output goes into the release notes.
-Tests run on at most 8 workers: each worker imports every test module, the model libraries among them, and on 32
-threads more workers made the suite slower (35 s on 8, 101 s on 32).
+Before a release, `nox -s explore` runs the property tests with fresh random examples, 2,000 each, and 200 at least for
+those that build stores (`few` in `tests/examples.py`); the gate runs them derandomized. And `nox -s real` runs the
+default models, from the Hugging Face cache or downloaded: it indexes a few notes and a scan with OCR, embeds them and
+searches them three ways, and on a CUDA GPU checks that the models rest and come back. Its session has CPU PyTorch; for
+the GPU, run `python -m tests.real_models` where PyTorch has CUDA. Tests run on at most 8 workers: each worker imports
+every test module, the model libraries among them, and on 32 threads more workers made the suite slower (35 s on 8, 101
+s on 32).
 
 ## Where things are
 
@@ -72,7 +71,7 @@ starts without the model libraries.
 ## Rules the checks hold
 
 - No comments and no docstrings: names, types, tests and structure carry the meaning (`python -m tools prose`).
-  An exception needs the owner's yes and an entry in `tools/prose_allowed.toml`.
+  An exception needs a maintainer's approval and an entry in `tools/prose_allowed.toml`.
 - `sift.api` and `sift.domain` hold pure functions and immutable values: no I/O, no result of a call left unused.
   Module-level values are immutable everywhere; no module has more than 400 lines, no class more than 10 methods
   (`python -m tools shape`, the import contracts, basedpyright).
@@ -80,28 +79,29 @@ starts without the model libraries.
   places need is kept where both can import it (`python -m tools dead`, `python -m tools twins`).
 - Packages import only those below them: interfaces, app, retrieval and ingest, storage and inference, domain, api.
   No module imports one that imports it (`[tool.importlinter]` in `pyproject.toml`).
-- SQLite, the model libraries, the document converter and worker processes are each imported in their place alone
+- SQLite, the model libraries, the document converter and worker processes are each imported only in their own module
   (the import contracts).
 - sift imports only packages `pyproject.toml` depends on, and the stubs in `typings/` name only what their packages
   have (`python -m tools imports`, `python -m tools stubs`, which the lint session runs where sift is installed).
 - Tests pass fakes and values in; `monkeypatch` is not used, and no test reads a clock: what costs time is counted
   (`python -m tools idioms`, which also holds lessons of earlier bugs: each of its findings names the fix).
-- sift reads its environment in `sift.settings` alone, and only `sift.interfaces` imports that module: the use cases
-  and the core take values (`python -m tools idioms`, the import contracts).
+- sift reads its environment only in `sift.settings`, and only `sift.interfaces` imports that module: the use cases and
+  the core take values (`python -m tools idioms`, the import contracts).
 - A character that shows as nothing, or as another, is written as an escape (`"\N{ZERO WIDTH SPACE}"`), never as
   itself (`python -m tools idioms`).
-- The tokenizer's table is generated from SQLite's FTS5 (`python -m tools fts5 --write`), and a test holds it equal.
-- Stores need SQLite 3.38 or newer (STRICT tables, the JSON functions built in); an older one is refused with what
-  to do. A store's layout changes by a numbered migration appended to `LAYOUT`, never by editing one a release has
-  shipped. Each migration says what a sift that does not know it may still do with the store (`Older`): nothing,
-  which is the default; read it; or read and write it, as when an index is added. The store records the answer,
-  and an older sift goes by it. A change of the keyword index's bytes or of the tokenizer's table raises `FORMAT`:
-  an older sift then refuses that index and says to upgrade, where it would otherwise make it anew as its own.
+- The tokenizer's table is generated from SQLite's FTS5 (`python -m tools fts5 --write`), and a test checks that it
+  matches.
+- Stores need SQLite 3.38 or newer (STRICT tables, the JSON functions built in); an older one is refused with what to
+  do. A store's layout changes by a numbered migration appended to `LAYOUT`, never by editing one a release has shipped.
+  Each migration says what a sift that does not know it may still do with the store (`Older`): nothing, which is the
+  default; read it; or read and write it, as when an index is added. The store records the answer, and an older sift
+  goes by it. A change of the keyword index's bytes or of the tokenizer's table raises `FORMAT`: an older sift then
+  refuses that index and says to upgrade, where it would otherwise rebuild it in its own format.
 - Published text names no machine's model, and prose is wrapped as the code is (`python -m tools text`).
-- A bound is a module constant named `MOST_*`, `FEWEST_*`, `LEAST_*`, `*_SECONDS`, `*_BYTES` or `*_LENGTH`, or a
-  field of a class named so in lower case, beside what it bounds; [limits.md](limits.md) lists them all, written anew
-  by `python -m tools limits --write`, and a test holds it equal to the code.
-- No check is silenced. A suppression needs the owner's yes, scoped to one rule in one place.
+- A bound is a module constant named `MOST_*`, `FEWEST_*`, `LEAST_*`, `*_SECONDS`, `*_BYTES` or `*_LENGTH`, or a field
+  of a class named so in lower case, beside what it bounds; [limits.md](limits.md) lists them all, regenerated by
+  `python -m tools limits --write`, and a test checks that it matches the code.
+- No check is silenced. A suppression needs a maintainer's approval and is scoped to one rule in one place.
 
 ## How changes are made
 

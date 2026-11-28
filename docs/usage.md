@@ -1,6 +1,6 @@
 # Using sift
 
-The details behind the [README](https://github.com/tobiaswuerth/sift#readme).
+Details beyond the [README](https://github.com/tobiaswuerth/sift#readme).
 
 - [Collections](#collections): adding, indexing, leaving files out, where sift keeps its files
 - [Searching](#searching): modes and scores, options, keyword syntax, reading documents
@@ -16,38 +16,38 @@ The details behind the [README](https://github.com/tobiaswuerth/sift#readme).
 
 A collection is a folder sift indexes: `sift add FOLDER [--name NAME]` adds it, `sift index` reads its files into the
 collection's store and `sift embed` embeds their passages. Both are incremental: they process only new and changed
-files, remove deleted ones, and an interrupted `sift embed` continues where it stopped. Files of a folder that can't be
-read for the moment (access denied, a share that doesn't answer), or of a collection whose folder is missing, stay as
-they were stored.
+files, remove deleted ones, and an interrupted `sift embed` continues where it stopped. Files that can't be read at
+the moment (access denied, a network share that doesn't answer), and those of a collection whose folder is missing,
+keep what was stored.
 
 A folder inside a collection, or holding one, isn't added, as its files would be indexed twice; `--nested` adds it
-anyway. `sift add` given a folder that is a collection already changes that collection's choices: `--title-from`,
-`--follow-links` and `--agents`.
+anyway. Running `sift add` on a folder that is already a collection changes that collection's settings:
+`--title-from`, `--follow-links` and `--agents`.
 
 **Active and inactive.** `sift deactivate NAME ...` leaves collections out of searches, and of `sift index` and
 `sift embed` unless named. Their stores stay, `reindex` still updates them, and `sift activate NAME ...` takes them
-back. `sift add FOLDER --no-agents` keeps a collection from agents alone: the MCP tools neither list nor search it,
+back. `sift add FOLDER --no-agents` hides a collection from agents only: the MCP tools neither list nor search it,
 while your own commands and the UI do.
 
 **Status.** `sift status` shows a table of the collections: folder, documents, passages, how many are embedded and by
 which model, the size of each store, and the links of collections holding any. A store that can't be read (a drive not
-connected, damaged, or written by a newer sift) is said beside it, `sift status` then ends with exit code 1, and
-searches pass it over; sift never makes such a store anew. `--unreadable` lists the files that could not be read, and
-why. With `--json` each collection gives `name`, `folder`, `store`, `active`, `agents` and its `contents`,
-whose `state` is `counted`, with `documents`, `chunks`, `embedded`, `model`, `stored_bytes`, `links`, `unresolved`,
-`fields`, `unreadable` and `unreadable_files`, or `unavailable`, with the reason.
+connected, damaged, or written by a newer sift) is reported beside it, `sift status` then ends with exit code 1, and
+searches pass it over; sift never recreates such a store. `--unreadable` lists the files that could not be read, and
+why. With `--json` each collection gives `name`, `folder`, `store`, `active`, `agents` and its `contents`, whose `state`
+is `counted`, with `documents`, `chunks`, `embedded`, `model`, `stored_bytes`, `links`, `unresolved`, `fields`,
+`unreadable` and `unreadable_files`, or `unavailable`, with the reason.
 
-**Files gone.** `sift index` drops the documents of files that are gone. But a folder that is missing, or holds none
-of its files any more, keeps what is stored, and `sift index` says so: a drive not mounted, or a folder being filled
-anew, is no folder emptied. A missing folder skips its collection (exit code 1); an emptied one is kept as indexed.
-If its files are gone for good, `sift rm NAME` forgets the collection.
+**Files gone.** `sift index` drops the documents of files that are gone. But a folder that is missing, or holds none of
+its files any more, keeps what is stored, and `sift index` says so: a drive that isn't mounted, or a folder being
+refilled, is not treated as emptied. `sift index` skips the collection of a missing folder (exit code 1) and keeps an
+emptied one as indexed. If its files are gone for good, `sift rm NAME` forgets the collection.
 
 ### Leaving files out
 
 sift reads the files it has a reader for, except in folders whose name starts with a dot (`.obsidian/`, `.git/`), in
 `node_modules` and `__pycache__`, in folders Windows marks both hidden and system, and in linked folders (symbolic
 links, junctions). A linked file is read as the file it points to if that lies in the collection's folder too; one that
-links to outside it is left out, and said, as a link may lead to any file of the machine: `sift add FOLDER
+links to outside it is left out, and reported, as a link may lead to any file of the machine: `sift add FOLDER
 --follow-links` reads those too, for a collection added before as well, and `--no-follow-links` leaves them out again;
 the next `sift index` follows either. A `.siftignore` in the collection's folder leaves out more, in gitignore's
 syntax:
@@ -64,14 +64,16 @@ drafts/
   taken from the collection's folder; one without matches at any level; a trailing slash matches folders only.
 - `!` takes back what an earlier pattern left out, but never a file in a folder left out.
 - Folders are separated by `/`, on Windows too; `\` escapes the next character (`\#notes.md`).
-- Case counts as on the file system: on Windows and macOS not at all.
+- Patterns are case-sensitive where the file system is: on Windows and macOS they ignore case.
 
 Only the `.siftignore` in the collection's folder counts. If it can't be read, `sift index` skips the collection and
-says so. The next `sift index` follows a changed `.siftignore` both ways; `reindex` refuses files it leaves out.
+says so. The next `sift index` applies a changed `.siftignore`, reading files it no longer leaves out and dropping those
+it now does; `reindex` refuses files it leaves out.
 
 ### Where sift keeps its files
 
-Everything sift keeps lies under `SIFT_HOME` (`~/.sift`), but stores placed elsewhere:
+Everything sift keeps lies under `SIFT_HOME` (`~/.sift`), except stores placed elsewhere, the home process's file in
+your own folder (below) and the models in Hugging Face's cache:
 
 | Path | What | Lifecycle |
 |---|---|---|
@@ -121,7 +123,7 @@ sift has the store open, saying so.
 | `query` | Keyword and semantic candidates reranked by a cross-encoder: the best for RAG | the reranker's, moved by the cosine |
 | `similar` | Documents like a given one, by its id | cosine, -1 to 1 |
 
-Scores rank the results of one search alone. Each result is a document with its best passage; a paper that several
+Scores compare only the results of one search. Each result is a document with its best passage; a paper that several
 collections hold under one DOI (front-matter `doi`) is one result, the best ranked copy, listing the others under
 `also`.
 
@@ -157,8 +159,8 @@ under `NOT` only leaves passages out and adds nothing to a score.
 
 A query sift can't read is refused, saying where: a quote or a parenthesis not closed, a `)` that closes nothing,
 `NEAR(...)`, which sift doesn't support, or a word that starts with `-`: write `NOT java` to leave out what holds it,
-or `"-5"` in quotes to search for it. Any space parts words, also a no-break space or the wide space of East Asian
-text.
+or `"-5"` in quotes to search for it. Any space separates words, including a no-break space and the ideographic
+space of East Asian text.
 
 The front matter is searched too, so an author's name or an id finds its documents.
 
@@ -171,18 +173,17 @@ sift get handbook/hr/leave.md --fields owner,modified   # front-matter fields, t
 sift get handbook/hr/leave.md handbook/hr/travel.md     # several, each headed by its id
 ```
 
-An id is `collection/path`, or the file's absolute path. After the collection, the end of a path is enough when only
-one document's path ends with it (`handbook/leave.md`); where several do, sift names them. Over MCP, `get` takes
-documents as ids or as `{"id": ..., "first_line": 14, "last_line": 23}`. One answer holds 100,000 characters of text:
-a text that passes them is cut at a line and says which lines are left out and how to get them.
+An id is `collection/path`, or the file's absolute path. After the collection, the end of a path is enough when only one
+document's path ends with it (`handbook/leave.md`); where several do, sift names them. Over MCP, `get` takes documents
+as ids or as `{"id": ..., "first_line": 14, "last_line": 23}`. An MCP answer holds at most 100,000 characters of text: a
+longer text is cut at a line, and the answer says which lines are left out and how to get them.
 
 ## Front matter and filters
 
-YAML front matter of flat `key: value` lines becomes filterable metadata. Lists can be in brackets
-(`aliases: [Hans Mueller, H. Müller]`, over several lines too) or one `- item` per line. A value is read as JSON
-first, so a program can write each value as JSON and get exactly it back; anything else is read as YAML-like text.
-Text over several lines goes on the indented lines below `key: |`, which keeps its lines, or `key: >`, which joins
-each paragraph's.
+YAML front matter of flat `key: value` lines becomes filterable metadata. Lists can be in brackets (`aliases: [Hans
+Mueller, H. Müller]`, over several lines too) or one `- item` per line. A value is read as JSON first, so a program can
+write each value as JSON and get exactly that value back; anything else is read as YAML-like text. Text over several
+lines goes on the indented lines below `key: |`, which keeps its lines, or `key: >`, which joins each paragraph's.
 
 ```markdown
 ---
@@ -225,11 +226,11 @@ thematic breaks stays text, and is searched.
 | Scanned PDFs | Markdown, by OCR ([below](#documents-and-scans)) |
 | Saved emails (`.eml`) | The message, and each attachment as a document of its own ([below](#emails)) |
 
-Text files are read as UTF-8, or UTF-16/UTF-32 after a byte order mark; bytes that aren't UTF-8 as Windows' ANSI
-(cp1252), as Notepad and Excel saved text, so that "Müller" stays "Müller". Damaged files are skipped and reported until
-they change. A file whose reader crashes or comes to no end in its time (ten minutes, and more for a large file) is
-skipped, said once, and read again only once it changes, or by the next version of sift. Old binary Office files
-(`.doc`, `.ppt`, `.xls`) aren't read.
+Text files are read as UTF-8, or UTF-16/UTF-32 after a byte order mark; text that isn't valid UTF-8 is read as
+Windows-1252, which Notepad and Excel used to save, so that "Müller" stays "Müller". Damaged files are skipped and
+reported until they change. A file whose reader crashes or doesn't finish in time (ten minutes, longer for a large
+file) is skipped and reported once, and read again only once it changes, or by the next version of sift. Old binary
+Office files (`.doc`, `.ppt`, `.xls`) aren't read.
 
 A JSON Lines record or an email attachment is a document named after its file and a `#`: record `T-1042` of
 `2025/tickets.jsonl` is `2025/tickets.jsonl#T-1042`, attachment `contract.pdf` of `offer.eml` is
@@ -311,12 +312,12 @@ sift search contract -f "org=[[Acme AG]]"        # org links to Acme AG, however
 
 A note is named by its id, or as links name it if one note answers to that. `mentions` looks for a note's file name,
 title and aliases, and the values of the fields `--also` names, as phrases (ä, ö, ü, ß also as ae, oe, ue, ss; names
-under three characters left out). `links` and `unresolved` return at most 50 (`-k`).
+under three characters left out). `links` returns at most 50 links each way and `unresolved` at most 50 targets; `-k`
+sets another limit, up to 10,000.
 
 **A note just written** is found by the next search once the agent calls `reindex`: it reads those files at once, or
-drops the documents of files gone, and where the collection is embedded, embeds every passage of it that waits for a
-vector. From the command
-line, `sift index --file` does the same, and `sift embed` embeds.
+drops the documents of files that are gone, and, where the collection is embedded, embeds every passage of it that
+lacks a vector. From the command line, `sift index --file` does the same, and `sift embed` embeds.
 
 ## Output and errors
 
@@ -356,9 +357,9 @@ command loads what it needs itself.
 | `--stdio` | MCP over standard input and output, for an agent that starts its servers itself: it talks to the home process, starting one if none runs (on Windows in a minimized window), which leaves after 15 minutes without a request |
 | `--idle-exit SECONDS` | Stop after this long with no request and no job |
 
-- It listens on 127.0.0.1 alone and answers only requests addressed to `127.0.0.1` or `localhost`. Your commands send
-  it the token it keeps in your own folder; MCP and the UI refuse pages of other sites. What it protects, and what
-  not: [security](SECURITY.md).
+- It listens only on 127.0.0.1 and answers only requests addressed to `127.0.0.1` or `localhost`. Your commands send it
+  the token it keeps in your own folder; MCP and the UI refuse pages of other sites. What this protects against, and
+  what it does not: [security](SECURITY.md).
 - It serves the user who started it. It says so when its settings (the models, OCR, GPUs, a worker) differ from the
   command's; stop it to use yours.
 - Writes wait for the searches reading a store, and searches wait for a removal or a move; each store takes one write
@@ -371,7 +372,8 @@ command loads what it needs itself.
 ## The browser UI
 
 `sift ui` opens the UI of the home process in your browser, at `http://127.0.0.1:8765/ui` for the default port; if no
-`sift serve` runs, it serves the home itself on a free port until you stop it. `--no-browser` prints the address alone.
+`sift serve` runs, it serves the home itself on a free port until you stop it. `--no-browser` prints the address without
+opening the browser.
 
 ![sift ui in dark mode: a keyword search over the ACL Anthology, filtered by venue, with the publishers, months and places of the papers found to drill into](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-browse-dark.png)
 
@@ -387,7 +389,7 @@ command loads what it needs itself.
 
 `sift bench` runs each search mode over questions whose answers you know and reports nDCG@10, MRR@10, Recall@10 and the
 time per query. Write the questions as an agent would ask them, with the ids of the documents that answer them; the
-keyword mode searches their words, and what a mode could not search is said:
+keyword mode searches their words, and sift reports what a mode could not search:
 
 ```json
 [

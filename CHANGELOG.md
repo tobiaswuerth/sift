@@ -1,99 +1,85 @@
 # Changelog
 
-All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and versions follow [Semantic Versioning](https://semver.org/). Releases before 2.0 are listed in
+All notable changes to sift. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
+versions follow [Semantic Versioning](https://semver.org/). Releases before 2.0 are listed in
 [the changelog of 1.15.2](https://github.com/tobiaswuerth/sift/blob/v1.15.2/CHANGELOG.md).
 
 ## [Unreleased]
 
-sift 2: stores of a new layout with a keyword index of its own, built by a compiled core, and a home process that
-answers agents, the browser and your own commands. A home of an older sift is brought in by `sift import`, once, as
-the [README](README.md#updating) says; until a collection is added there, any command in such a home says so too.
-
-### Changed
-
-- sift needs Python 3.12 or newer, built with SQLite 3.38 or newer, as uv's, python.org's and Homebrew's Pythons are.
-  A Python built against an older system SQLite (Ubuntu 22.04 has 3.37) is refused, saying so.
-- sift ships a compiled extension written in Rust, which builds, merges and searches the keyword index and puts the
-  passages in their topical order, on all cores. PyPI holds it built for Linux on x86-64 and ARM (glibc 2.28 or
-  newer), macOS on Apple silicon and Windows on x86-64, one wheel each for every CPython from 3.12 on. Anywhere else,
-  and on the free-threaded builds, pip builds it from the sources, which needs Rust 1.100 or newer and a C compiler.
-  The licences of the Rust crates built into it are in each package, beside sift's own.
-- Each collection is one store, listed in `catalog.sqlite`. A store's layout changes by numbered migrations, which the
-  first command of a newer sift runs once. Each store records which older sifts may still read it and which may write
-  it: an older sift opens a store a newer one changed in a way it can live with, reads one it could not keep right,
-  and refuses the rest, saying to upgrade. A keyword index of a newer format is refused likewise, never made anew.
-- Keyword search reads sift's own index, written in the documents' transaction, so nothing is behind after
-  `sift index`. Its terms are those of SQLite's `unicode61` tokenizer, without diacritics, ranked by BM25. A query sift
-  can't read is refused, saying where: a quote or a parenthesis not closed, a `)` closing nothing, a word starting
-  with `-` (`NOT word` leaves it out).
-- When `sift index` puts the passages in their topical order, it builds the index of that order beside the one
-  searches read, its passages read by eight readers at once, and switches to it in one transaction: keyword search
-  answers throughout, and an order stopped midway is taken up by the next run.
-- `sift serve` is the home process: one per home, on 127.0.0.1, for agents (MCP), the browser (the UI) and your own
-  `sift` commands, which it answers with its models and codes loaded. `sift serve --stdio` talks to it, starting one
-  if none runs (on Windows in a minimized window), which leaves after 15 idle minutes; `sift ui` opens its pages, or
-  serves the home itself on a free port.
-- The MCP tools are five: `search` (hybrid, keyword or semantic, up to 20 queries a call, paged by `offset`), `get`,
-  `related` (documents alike, a note's links, its backlinks, its mentions), `collections` (with the jobs that run),
-  and `reindex`, which runs as a job of the home process. Agents need a new session to see them.
-- A JSON Lines record and a mail attachment are named after their file and a `#`: `papers/2024.jsonl#2401.00001` and
-  `mail/offer.eml#contract.pdf`.
-- `--json` answers are objects, and so are refusals and failures:
-  `{"error": {"kind": ..., "code": ..., "message": ..., "remedy": ..., "field": ...}}`. A search gives `hits`, with
-  what was searched, left out, loosened or cut short beside them, and each hit its `collection`, `path`, `first_line`
-  and `last_line`. `sift status` gives `home`, and for each collection `folder`, `agents` and its counts under
-  `contents`: `documents`, `chunks`, `embedded`, `model`, `stored_bytes`, `unreadable`. `sift links --json` gives `out`
-  and `into`, each `null` where it was not asked for, a linking document its `lines` and `through`;
-  `sift unresolved --json` gives `targets`.
-- A request sift refuses as written (an unknown flag, a value out of range, a query it can't read) ends with exit
-  code 2, any other failure with 1.
-- A `SIFT_` variable sift doesn't know, a misspelt one or one of a newer sift, is refused by every command, naming it.
-- `sift status` prints a table; `--json` gives JSON.
-- `sift index --file A --file B` names files to read, in place of `--files`; `sift add` names the fields of JSON
-  Lines with `--id-field`, `--title-field` and `--text-fields`, in place of `--id`, `--title` and `--text`.
-- A folder holding `.obsidian/` is titled by file name unless `--title-from` says otherwise, as Obsidian names its
-  notes.
-- A collection's name has at most 100 characters and is none Windows keeps for a device (`con`, `nul`, `com1`, …),
-  on every system.
-- `sift move` runs beside `sift serve`: it waits for the searches reading the store, and the next searches wait for
-  it.
-- A model other than the defaults is named at a whole commit (`owner/model@<40 hex digits>`) or as a folder: a
-  branch, a tag or a short commit is refused, as each may name other weights tomorrow.
-- `SIFT_UPDATE_CHECK` is off by default. Turned on, a command run in a terminal says when a newer sift is out and which
-  command updates it; sift never updates itself.
-- `sift worker` takes at most 256 texts a request, and serves sifts of its own major version.
-- `sift embed` reads 16,384 passages at a time and embeds them longest first, writing each batch's vectors as soon
-  as it is done, the next two batches' words cut while the model runs on the one before. On an NVIDIA GPU, with
-  20,000 passages or more waiting, it compiles the model first: 20 to 60 s, once a process and again after the home
-  process let the idle model go, shown as its own step, and then about twice as many passages a second. Fewer
-  passages, queries and other devices use the model as it is. On Windows sift depends on `triton-windows` for it;
-  PyTorch brings Triton on Linux.
-
-### Removed
-
-- `sift serve --host` and `--allow-host`, and `sift ui --host`, `--port` and `--allow-host`: the home process
-  answers this machine alone. To lend a GPU to other machines, `sift worker` remains.
-- The keyword syntax `NEAR(...)`, column filters (`meta:`, `title:`) and `^`.
-- Updating itself, with `update.lock` and the update logs.
-- Numba: the codes are scanned with NumPy.
+A rebuild of sift: a new store layout, a keyword index of its own built by a compiled Rust core, and a home process
+that serves agents, the browser and the command line. sift 2 does not open the stores of sift 1.x: bring them in
+once with `sift import`, as [Updating](https://github.com/tobiaswuerth/sift/blob/main/README.md#updating) describes.
 
 ### Added
 
-- `sift import`: the collections of an older home, with their choices and vectors, into this one.
-- `sift jobs`: what the home process does in the background, and `--stop` to stop a job.
-- `--offset` and `--budget` on every search, `--candidates` on `query`, and every search option on `mentions`.
-- `sift add --agents` and `--no-agents`: whether agents see a collection.
-- `sift status --unreadable`, `sift serve --idle-exit`, `sift ui --no-browser`.
-- `--json` and `--color` on every command, before or after its name; `NO_COLOR` and `TERM=dumb` turn colours off.
-- [docs/limits.md](docs/limits.md): every bound sift sets.
+- `sift import` brings in the collections of a 1.x home with their settings, keeping the vectors of unchanged
+  passages.
+- `sift serve` is the home process: one per home, on 127.0.0.1, serving MCP, the UI and the CLI with the models
+  loaded once. `sift serve --stdio` connects to it, or starts one that exits after 15 idle minutes.
+- `sift jobs` lists the home process's background jobs; `--stop` stops one.
+- `--offset` and `--budget` on every search, `--candidates` on `query`, and all search options on `mentions`.
+- `sift add --agents` and `--no-agents`, `sift status --unreadable`, `sift serve --idle-exit`, `sift ui --no-browser`.
+- `--json` and `--color` on every command; `NO_COLOR` and `TERM=dumb` turn colours off.
+- [docs/limits.md](https://github.com/tobiaswuerth/sift/blob/main/docs/limits.md) lists every bound sift sets.
+
+### Changed
+
+- Requires Python 3.12 or newer with SQLite 3.38 or newer, as the Python builds of uv, python.org and Homebrew have.
+  A Python linked against an older system SQLite, such as Ubuntu 22.04's 3.37, is refused with an explanation.
+- Ships a compiled extension, written in Rust, as wheels for Linux on x86-64 and ARM (glibc 2.28 or newer), macOS on
+  Apple silicon and Windows on x86-64, for every CPython from 3.12 on. Elsewhere, and on free-threaded builds, pip
+  builds it from source, which needs [rustup](https://rustup.rs) (it installs the pinned Rust 1.100.0) and a C
+  compiler. Each package includes the licences of the Rust crates built into it.
+- Requires PyTorch 2.14 and torchvision 0.29 or newer.
+- Each collection is one store, listed in `catalog.sqlite`. Store layouts change through numbered migrations that a
+  newer sift applies once; each store records whether older versions may read or write it, and refuses them
+  otherwise with a request to upgrade.
+- Keyword search uses sift's own index, written in the same transaction as the documents, so it is current as soon as
+  `sift index` ends. Terms follow SQLite's `unicode61` tokenizer without diacritics, ranked by BM25. Malformed
+  queries, such as one with a word starting with `-` (write `NOT word`), are refused with the position of the error.
+- `sift index` builds a new topical order beside the live index and switches to it in one transaction, so keyword
+  search keeps answering; an interrupted build resumes on the next run.
+- `sift embed` sorts passages by length, writes each batch as soon as it is embedded, and on an NVIDIA GPU compiles
+  the model before embedding 20,000 passages or more: 20 to 60 seconds once per process, then about twice the
+  throughput. On Windows this uses `triton-windows`; if compiling fails, the model runs uncompiled.
+- The MCP tools are now `search` (hybrid, keyword or semantic; up to 20 queries per call), `get`, `related`,
+  `collections` and `reindex`. Agents need a new session to see them.
+- MCP `get` takes `documents`, each an id or `{"id": ..., "first_line": ..., "last_line": ...}`, in place of
+  `id` and `lines`.
+- JSON Lines records and mail attachments are identified as `FILE#KEY`, such as `papers/2024.jsonl#2401.00001`.
+- `--json` output is always an object, and errors are too:
+  `{"error": {"kind": ..., "code": ..., "message": ..., "remedy": ..., "field": ...}}`. Search results are under
+  `hits`, with `collection`, `path`, `first_line` and `last_line` per hit; `sift status` reports `home` and per
+  collection `folder`, `agents` and `contents`; `sift links` reports `out` and `into`, and `sift unresolved` reports
+  `targets`.
+- Exit code 2 means a request was refused as asked, 130 that it was stopped (Ctrl+C), and 1 any other failure.
+- Unknown `SIFT_` environment variables are refused by name.
+- `sift status` prints a table.
+- Renamed options: `sift index --file` (repeatable) replaces `--files`; `sift add --id-field`, `--title-field` and
+  `--text-fields` replace `--id`, `--title` and `--text`.
+- Folders containing `.obsidian/` are titled by file name unless `--title-from` says otherwise.
+- Collection names are limited to 100 characters and may not be a Windows device name (`con`, `nul`, `com1`, …).
+- `sift move` works while `sift serve` runs.
+- Models other than the defaults must be named at a full commit (`owner/model@<40 hex digits>`) or as a local folder;
+  branches, tags and short commits are refused.
+- `SIFT_UPDATE_CHECK` is off by default. When on, a command run in a terminal reports a newer version and the
+  command that installs it.
+- `sift worker` accepts at most 256 texts per request and serves only clients of its own major version.
+
+### Removed
+
+- `sift serve --host` and `--allow-host`, and `sift ui --host`, `--port` and `--allow-host`: the home process serves
+  this machine only. `sift worker` still lends a GPU to other machines.
+- The keyword syntax `NEAR(...)`, column filters (`meta:`, `title:`) and `^`.
+- Self-updating, with `update.lock` and the update logs.
+- The Numba dependency.
 
 ### Security
 
-- Your commands send the home process a token, kept with its port in your own folder (`%LOCALAPPDATA%\sift` on
-  Windows, `$XDG_STATE_HOME/sift` or `~/.local/state/sift` elsewhere), readable by you alone, never in the home: it
-  grants the whole command line. MCP and the UI take none, answer only requests addressed to `127.0.0.1` or
-  `localhost`, and MCP refuses what web pages of other sites send; no other site can show the UI's pages or files in
-  a frame, load them, or make the UI search in the background ([security](docs/SECURITY.md)).
+- CLI commands authenticate to the home process with a token stored, with its port, in a per-user folder outside the
+  home (`%LOCALAPPDATA%\sift` on Windows, `$XDG_STATE_HOME/sift` or `~/.local/state/sift` elsewhere) and readable
+  only by the user. MCP and the UI answer only requests addressed to `127.0.0.1` or `localhost`; MCP rejects requests
+  from web pages of other sites, and other sites cannot frame, load or trigger the UI
+  ([security policy](https://github.com/tobiaswuerth/sift/blob/main/docs/SECURITY.md)).
 
 [Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.15.2...HEAD
