@@ -1,4 +1,15 @@
-from sift.interfaces.web.view import PAGE, PageView, filtered, filters_of, folder_glob, href, view_of
+from sift.interfaces.web.view import (
+    MOST_FILTERS,
+    MOST_FOLDERS_DEEP,
+    MOST_PATH_CHARACTERS,
+    PAGE,
+    PageView,
+    filtered,
+    filters_of,
+    folder_glob,
+    href,
+    view_of,
+)
 
 
 def test_an_address_is_read_into_a_view_and_odd_values_fall_back() -> None:
@@ -33,3 +44,11 @@ def test_filters_of_one_field_are_any_of_their_values() -> None:
 
 def test_a_folder_s_glob_takes_its_brackets_stars_and_question_marks_as_written() -> None:
     assert folder_glob("z/[x]*?/") == "z/[[]x][*][?]/*"
+
+
+def test_a_view_holds_at_most_its_bounds_of_filters_and_of_a_path_whatever_the_address_asks() -> None:
+    many = view_of([("f", f"a{n}=1") for n in range(5_000)])
+    deep = view_of([("path", "a/" * 5_000)])
+    long = view_of([("path", "x" * 10_000)])
+    assert (len(many.f), many.f[0]) == (MOST_FILTERS, "a0=1")
+    assert (deep.path.count("/"), len(long.path)) == (MOST_FOLDERS_DEEP, MOST_PATH_CHARACTERS + 1)

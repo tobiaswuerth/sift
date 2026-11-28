@@ -9,6 +9,9 @@ from urllib.parse import urlencode
 PREFIX = "/ui"
 PAGE = 30
 MOST = 500
+MOST_FILTERS = 32
+MOST_PATH_CHARACTERS = 4_096
+MOST_FOLDERS_DEEP = 256
 MODES = MappingProxyType(
     {"keyword": ("Keywords", "search"), "semantic": ("Meaning", "vsearch"), "hybrid": ("Hybrid", "query")}
 )
@@ -42,14 +45,15 @@ def _count(text: str) -> int:
 
 def view_of(pairs: Sequence[tuple[str, str]]) -> PageView:
     given = dict(pairs)
-    path = "/".join(part for part in given.get("path", "").split("/") if part)
+    parts = [part for part in given.get("path", "")[:MOST_PATH_CHARACTERS].split("/") if part]
+    path = "/".join(parts[:MOST_FOLDERS_DEEP])
     mode = given.get("mode", "")
     return PageView(
         q=given.get("q", "").strip(),
         mode=mode if mode in MODES else DEFAULT.mode,
         c=given.get("c", ""),
         path=f"{path}/" if path else "",
-        f=tuple(value for key, value in pairs if key == "f" and "=" in value),
+        f=tuple(value for key, value in pairs if key == "f" and "=" in value)[:MOST_FILTERS],
         sort=given.get("sort", ""),
         k=min(_count(given.get("k", "")), MOST) or PAGE,
         similar=given.get("similar", ""),
