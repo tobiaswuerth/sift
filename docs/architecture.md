@@ -62,7 +62,8 @@ diacritics removed, reproduced exactly as a table of every code point's separato
   the model runs. On an NVIDIA GPU, with 20,000 passages or more to embed, it first compiles the model with PyTorch
   (Triton's kernels, the whole model as one graph): 20 to 60 seconds, once a process and again after the home
   process let the idle model go, then about twice the passages a second. Queries, single texts and other devices use
-  the model as it is.
+  the model as it is. If compiling fails, the model runs as it is too; where the installed Triton is another minor
+  release than the one PyTorch's metadata names, sift says which to install.
 - Each vector's signs, one bit per dimension, are held in memory: 96 bytes for 768 dimensions. A query is compared with
   every code by Hamming distance, without an index to build or tune. The nearest 10,000 are ranked again by the
   query's own floats against their bits, and the best 1,000 are scored exactly with their vectors. A search for more

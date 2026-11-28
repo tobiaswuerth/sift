@@ -43,7 +43,8 @@ once with `sift import`, as [Updating](https://github.com/tobiaswuerth/sift/blob
   search keeps answering; an interrupted build resumes on the next run.
 - `sift embed` sorts passages by length, writes each batch as soon as it is embedded, and on an NVIDIA GPU compiles
   the model before embedding 20,000 passages or more: 20 to 60 seconds once per process, then about twice the
-  throughput. On Windows this uses `triton-windows`; if compiling fails, the model runs uncompiled.
+  throughput. On Windows this uses `triton-windows`. If compiling fails, the model runs uncompiled, and where the
+  installed Triton is another release than PyTorch was built for, sift names the one to install.
 - The MCP tools are now `search` (hybrid, keyword or semantic; up to 20 queries per call), `get`, `related`,
   `collections` and `reindex`. Agents need a new session to see them.
 - MCP `get` takes `documents`, each an id or `{"id": ..., "first_line": ..., "last_line": ...}`, in place of

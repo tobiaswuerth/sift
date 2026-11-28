@@ -161,11 +161,13 @@ def test_a_model_that_cannot_be_compiled_says_so_and_embeds_as_it_is(tiny: Path)
 
         return failing
 
-    models = Local(str(tiny), host=LocalHost(compiler=compiler, compiles=lambda _: True))
+    models = Local(str(tiny), host=LocalHost(compiler=compiler, compiles=lambda _: True, unpaired=lambda: ()))
     said = f"{models.name} could not be compiled, so it runs as it is: no compiler for this GPU"
     assert models.prepare_many() == ModelsPrepared((said,), built=False)
     assert models.encode(["dark matter", "halo"], query=False).shape == (2, WIDTH)
     assert Local(str(tiny)).prepare_many() == ModelsPrepared((), built=False)
+    hinted = Local(str(tiny), host=LocalHost(compiler=compiler, compiles=lambda _: True, unpaired=lambda: ("hint",)))
+    assert hinted.prepare_many() == ModelsPrepared((said, "hint"), built=False)
 
 
 def test_a_recursion_too_deep_while_the_model_is_compiled_is_raised_whatever_it_says(tiny: Path) -> None:

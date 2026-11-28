@@ -35,6 +35,7 @@ from sift.inference.held import (
     woken,
 )
 from sift.inference.hub import RERANK_MODEL, hub, pinned
+from sift.inference.pairing import read_unpaired
 from sift.inference.prepared import ModelsPrepared
 
 MOST_TOKENS = 1024
@@ -235,6 +236,7 @@ class LocalHost:
     caches: Mapping[str, Callable[[], None]] = CACHES
     compiler: Callable[[Embedder], Forward] = _compiled
     compiles: Callable[[Device], bool] = _compiles
+    unpaired: Callable[[], tuple[str, ...]] = read_unpaired
 
 
 LOCAL_HOST = LocalHost()
@@ -345,7 +347,8 @@ class Local:
         except RecursionError:
             raise
         except RuntimeError as error:
-            return ModelsPrepared((UNCOMPILED.format(model=self.name, problem=_first_line(error)),), built=False)
+            said = UNCOMPILED.format(model=self.name, problem=_first_line(error))
+            return ModelsPrepared((said, *self.host.unpaired()), built=False)
         self.state = replace(state, embedder=replace(loaded, compiled=compiled))
         seconds = self.host.clock() - started
         return ModelsPrepared((COMPILED.format(model=self.name, seconds=seconds),), built=True)
