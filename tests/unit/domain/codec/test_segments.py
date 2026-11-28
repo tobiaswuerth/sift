@@ -7,12 +7,12 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.arrays import floats, ints
-from sift.domain.codec.postings import lengths_all, ranges_of
+from sift.domain.codec.postings import lengths_all, ranges_in, ranges_kept
 from sift.domain.codec.segments import GAP, WrittenSegment, building, counted, gathered, stream, written
 from sift.domain.codec.shape import Shape
-from sift.domain.rank.bm25 import STEPS, TOP, term_scores, unquantized
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, field_tokens, tokens
 from tests.coded_lists import blocked, packed, positions_of
+from tests.scores import STEPS, TOP, term_scores, unquantized
 from tests.unit.domain.codec.built import EVERY_TOKEN, SEGMENT, SMALL, Columns, chunks, segment
 
 MOST_TIMES = 1024
@@ -118,7 +118,9 @@ def test_the_ranges_of_a_long_list_bound_every_score_in_them(columns: list[tuple
         assert held.chunks >= SMALL.long
         found, counts, _ = decoded(held)
         scores = term_scores(np.array(counts), sizes[np.array(found) - 100], 3.0)
-        ranges = ranges_of(held.held.ranges, held.chunks)
+        shift = SMALL.range_shift
+        bounds = (ints(ids[:1])[0] >> shift, ints(ids[-1:])[0] >> shift, held.chunks)
+        ranges = ranges_in(ranges_kept([held.held.ranges], [bounds])[0])
         bests = floats(unquantized(ranges.best))
         for rid, start, end, best in zip(ints(ranges.ids), ints(ranges.starts), ints(ranges.ends), bests, strict=True):
             assert all(chunk >> SMALL.range_shift == rid for chunk in found[start:end])

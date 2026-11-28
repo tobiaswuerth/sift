@@ -2,22 +2,12 @@ import tempfile
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
 
 import numpy as np
-from numpy.typing import NDArray
 
-from sift.domain.arrays import ints
+from sift.domain.codec.postings import HeldBlock, HeldTable, kept_bytes, postings_of
 from sift.domain.query.expressions import Or, Phrase, Term
-from sift.retrieval.keyword.lists import (
-    BlockKey,
-    DecodedLists,
-    Dense,
-    PostingArrays,
-    held_bytes,
-    lengths_at,
-    opened,
-)
+from sift.retrieval.keyword.lists import BlockKey, DecodedLists, opened
 from sift.storage.database import Connection, reading
 from tests.keyword_searches import Draws, prose, search
 from tests.keyword_stores import SMALL, applied, opened_store
@@ -41,15 +31,8 @@ def reads(said: list[str]) -> dict[str, int]:
     return {table: sum(table in statement for statement in said) for table in READS}
 
 
-def alone(array: NDArray[np.generic]) -> bool:
-    holder: NDArray[np.generic] | bytes = array
-    while isinstance(holder, np.ndarray) and holder.base is not None:
-        holder = cast("NDArray[np.generic] | bytes", holder.base)
-    return memoryview(holder).nbytes == array.nbytes
-
-
 def test_a_search_given_what_was_decoded_before_reads_no_lengths_or_blocks_again() -> None:
-    lengths, blocks = dict[int, Dense](), dict[BlockKey, PostingArrays]()
+    lengths, blocks = dict[int, HeldTable](), dict[BlockKey, HeldBlock]()
     kept = DecodedLists(lengths, blocks)
     with store_of(3, 30) as connection:
         said = list[str]()
@@ -62,9 +45,9 @@ def test_a_search_given_what_was_decoded_before_reads_no_lengths_or_blocks_again
         connection.set_trace_callback(None)
     assert (again, [reads(said)[table] > 0 for table in READS]) == (first, [table not in KEPT for table in READS])
     assert all(before[table] for table in READS), before
-    assert all(alone(each) for dense in lengths.values() for each in (dense.numbers, dense.table, dense.order))
-    assert all(alone(each) for arrays in blocks.values() for each in arrays)
-    assert held_bytes(next(iter(blocks.values()))) == sum(each.nbytes for each in next(iter(blocks.values())))
+    assert {kept_bytes(each) % (4 << SMALL.lengths_shift) for each in lengths.values()} == {0}
+    assert sum(kept_bytes(each) for each in lengths.values()) > 0
+    assert all(kept_bytes(each) == sum(held.nbytes for held in postings_of([each])[:2]) for each in blocks.values())
 
 
 def test_a_store_without_documents_searched_beside_another_changes_neither_its_reads_nor_its_hits() -> None:
@@ -85,21 +68,18 @@ def test_a_store_without_documents_searched_beside_another_changes_neither_its_r
     assert all(alone_read[table] for table in READS), alone_read
 
 
-def test_lengths_given_to_a_search_stay_as_they_were_while_others_read_more_from_them() -> None:
-    with store_of(1, 60) as connection, reading(connection) as transaction:
-        base = DecodedLists({}, {})
-        store = opened(transaction, base)
-        (segment,) = store.segments
-        places = np.arange(segment.first, segment.last + 1, dtype=np.int64)
-        block = places >> SMALL.lengths_shift
-        third, fourth, fifth = ints(np.unique(block))[2:5]
-        lengths_at(store, places[block <= third])
-        shared = base.lengths.get(segment.id)
-        assert shared is not None
-        before = shared.table.copy()
-        one, other = DecodedLists({segment.id: shared}, {}), DecodedLists({segment.id: shared}, {})
-        read_by_one = lengths_at(opened(transaction, one), places[block == fourth])
-        lengths_at(opened(transaction, other), places[block == fifth])
-        assert np.array_equal(shared.table, before)
-        assert np.array_equal(lengths_at(opened(transaction, one), places[block == fourth]), read_by_one)
-        assert np.array_equal(read_by_one, lengths_at(opened(transaction), places[block == fourth]))
+def test_a_segment_s_lengths_are_one_table_that_the_searches_after_fill_further() -> None:
+    lengths, blocks = dict[int, HeldTable](), dict[BlockKey, HeldBlock]()
+    kept = DecodedLists(lengths, blocks)
+    with store_of(1, 300) as connection:
+        with reading(connection) as transaction:
+            search([opened(transaction, kept)], Term("w20"), 5)
+        (segment,) = lengths
+        table, before = lengths[segment], kept_bytes(lengths[segment])
+        with reading(connection) as transaction:
+            search([opened(transaction, kept)], Or((Term("w0"), Term("w3"), Term("w7"))), 5)
+    assert (list(lengths), kept_bytes(table) > before, kept_bytes(lengths[segment])) == (
+        [segment],
+        True,
+        kept_bytes(table),
+    )

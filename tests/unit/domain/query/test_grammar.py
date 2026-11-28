@@ -10,11 +10,11 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.api.errors import InvalidRequestError
-from sift.domain.arrays import Mask, ints
+from sift.domain.arrays import Mask
 from sift.domain.query.expressions import NOTHING, And, Expression, Leaf, Not, Or, Phrase, Prefix, Term, leaves
 from sift.domain.query.grammar import MOST_DEPTH, MOST_QUERY_CHARS, MOST_WORDS, parsed, relaxed, words_in
-from sift.domain.rank.boolean import counted, may_hold
 from tests.examples import few
+from tests.keyword_searches import held_by
 
 DASH = "\N{EN DASH}"
 a, b, c = Term("a"), Term("b"), Term("c")
@@ -245,11 +245,12 @@ def test_random_queries_match_what_fts5_matches(seed: int) -> None:
                 expression = parsed(query)
             except InvalidRequestError:
                 continue
-            found = (
-                set[int]()
-                if expression == NOTHING
-                else {n + 1 for n in ints(np.flatnonzero(counted(expression, present)[0]))}
-            )
+            named = leaves(expression)
+            found = {
+                n + 1
+                for n in range(len(ROWS))
+                if expression != NOTHING and held_by(expression, {leaf for leaf in named if present[leaf][n]})[0]
+            }
             assert found == want, query
             compared += 1
     assert compared == COMPARED
@@ -257,30 +258,6 @@ def test_random_queries_match_what_fts5_matches(seed: int) -> None:
 
 def mask(*values: int) -> Mask:
     return np.array(values, np.bool_)
-
-
-def test_a_leaf_counts_only_where_no_and_or_not_above_it_fails() -> None:
-    present: dict[Leaf, Mask] = {a: mask(1, 1, 0), b: mask(1, 0, 1), c: mask(0, 1, 1)}
-    held, counting = counted(Or((And((a, b)), Not(c, a))), present)
-    assert held.tolist() == [True, False, True]
-    assert [(leaf, where.tolist()) for leaf, where in counting] == [
-        (a, [True, False, False]),
-        (b, [True, False, False]),
-        (c, [False, False, True]),
-    ]
-
-
-def test_a_range_may_hold_a_not_wherever_it_holds_what_the_not_keeps() -> None:
-    present: dict[Leaf, Mask] = {a: mask(1, 0), b: mask(1, 1)}
-    assert may_hold(Not(a, b), present).tolist() == [True, False]
-    assert may_hold(Or((a, And((a, b)))), present).tolist() == [True, False]
-
-
-def test_nothing_is_never_searched_for() -> None:
-    with pytest.raises(ValueError, match="nothing is searched for"):
-        counted(NOTHING, {})
-    with pytest.raises(ValueError, match="nothing is searched for"):
-        may_hold(NOTHING, {})
 
 
 def test_a_query_of_as_many_words_as_allowed_is_read() -> None:

@@ -2,22 +2,28 @@ import cProfile
 import pstats
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
 import sift.domain.codec.postings as postings_module
+import sift.domain.rank.pruned as pruned_module
 import sift.retrieval.keyword.lists as lists_module
-import sift.retrieval.keyword.search as search_module
+import sift.retrieval.keyword.scoring as scoring_module
 import sift.storage.keyword_lists as keyword_lists_module
+from sift.domain.codec.postings import kept_bytes
 from sift.domain.codec.shape import Shape
 from sift.domain.query.expressions import And, Leaf, Or, Phrase, Term
-from sift.retrieval.keyword.lists import Dense, Opened
+from sift.retrieval.keyword.lists import BlockKey, DecodedLists, Opened, opened
 from sift.retrieval.keyword.search import FoundChunk, Tuning
 from tests.keyword_searches import Chunks, Draws, blocks_read, brute, collections, prose, same, search
 from tests.keyword_stores import Round
+
+if TYPE_CHECKING:
+    from sift.domain.codec.postings import HeldBlock, HeldTable
 
 FILLER = "filler"
 W1 = Term("w1")
@@ -44,7 +50,11 @@ def calls(run: Callable[[], object], named: Sequence[tuple[ModuleType, str]]) ->
     return [int(each.ncalls.split("/")[0]) for each in found]
 
 
-def test_a_word_s_postings_in_many_segments_get_their_lengths_once_a_batch_of_ranges() -> None:
+def finding(found: list[tuple[FoundChunk, ...]], stores: list[Opened], query: Leaf | Or, k: int) -> Callable[[], None]:
+    return lambda: found.append(search(stores, query, k))
+
+
+def test_a_word_s_postings_in_many_segments_get_their_lengths_in_one_ask_a_batch_of_ranges() -> None:
     rng = Draws(np.random.default_rng(3))
     rounds = [prose(rng, 30, f"r{n}_") for n in range(8)]
     with collections([rounds]) as (stores, held):
@@ -52,10 +62,40 @@ def test_a_word_s_postings_in_many_segments_get_their_lengths_once_a_batch_of_ra
         assert len(store.segments) == len(rounds)
         query = Or((Term("w0"), Term("w1"), Term("w2")))
         found: list[tuple[FoundChunk, ...]] = []
-        scored = [(search_module, "_scored_group"), (lists_module, "lengths_at")]
-        batches, looked_up = calls(lambda: found.append(search(stores, query, 5)), scored)
+        asked = [(scoring_module, "read_blocks"), (scoring_module, "read_lengths"), (keyword_lists_module, "lengths")]
+        stages, looked_up, statements = calls(finding(found, stores, query, 5), asked)
         same(found[0], brute(held, query, 20, by_document=True), 5, query)
-        assert 0 < looked_up <= (batches + 1) * len(query.parts)
+        assert 0 < looked_up <= stages + 1 < statements
+
+
+@dataclass(eq=False, slots=True)
+class Recording[K, V]:
+    held: dict[K, V] = field(default_factory=dict[K, V])
+    asked: list[K] = field(default_factory=list[K])
+
+    def get(self, key: K, /) -> V | None:
+        self.asked.append(key)
+        return self.held.get(key)
+
+    def __setitem__(self, key: K, value: V, /) -> None:
+        self.held[key] = value
+
+
+def test_a_store_is_scored_by_one_call_that_asks_python_for_each_block_once_and_each_segment_s_lengths_once() -> None:
+    rng = Draws(np.random.default_rng(3))
+    with collections([[prose(rng, 30, f"r{n}_") for n in range(8)], [prose(rng, 40, "o")]]) as (stores, held):
+        kept: list[tuple[Recording[int, HeldTable], Recording[BlockKey, HeldBlock]]]
+        kept = [(Recording(), Recording()) for _ in stores]
+        recorded = [opened(store.transaction, DecodedLists(*each)) for store, each in zip(stores, kept, strict=True)]
+        query = Or((Term("w0"), Term("w1"), Term("w2")))
+        found: list[tuple[FoundChunk, ...]] = []
+        (scorings,) = calls(finding(found, recorded, query, 5), [(pruned_module, "scored")])
+        same(found[0], brute(held, query, 20, by_document=True), 5, query)
+    blocks = [asked.asked for _, asked in kept]
+    lengths = [sorted(asked.asked) for asked, _ in kept]
+    assert scorings == len(stores)
+    assert all(len(keys) == len(set(keys)) > 0 for keys in blocks), blocks
+    assert lengths == [sorted(segment.id for segment in store.segments) for store in recorded]
 
 
 def test_a_word_in_every_chunk_is_read_only_where_the_others_bring_a_chunk_near() -> None:
@@ -107,10 +147,10 @@ def test_the_blocks_of_a_list_that_a_batch_of_ranges_needs_are_read_by_one_state
     notes: Round = {f"n{n:04}.md": ("", "N", f"w1 x{n}") for n in range(600)}
     with collections([[notes]]) as (stores, held):
         (store,) = stores
-        asked = [(search_module, "_scored_group"), (keyword_lists_module, "blocks")]
-        batches, statements = calls_finding_half(stores, held, asked)
-        assert len(blocks_read(store)) > 10 * batches
-        assert statements <= batches
+        asked = [(scoring_module, "read_blocks"), (keyword_lists_module, "blocks")]
+        stages, statements = calls_finding_half(stores, held, asked)
+        assert len(blocks_read(store)) > 10 * stages
+        assert statements <= stages
 
 
 def test_the_blocks_a_statement_reads_are_unpacked_by_one_call_not_one_each() -> None:
@@ -123,15 +163,16 @@ def test_the_blocks_a_statement_reads_are_unpacked_by_one_call_not_one_each() ->
         assert unpacked == statements
 
 
-def test_the_lengths_a_search_reads_are_unpacked_by_one_call_a_read_not_one_for_each_block() -> None:
+def test_the_lengths_a_search_reads_are_read_by_one_statement_a_stage_not_one_for_each_block() -> None:
     notes: Round = {f"n{n:04}.md": ("", "N", f"w1 x{n}") for n in range(600)}
     with collections([[notes]]) as (stores, held):
         (store,) = stores
-        asked = [(lists_module, "lengths_at"), (postings_module, "lengths_all")]
-        looked_up, unpacked = calls_finding_half(stores, held, asked)
-        blocks = sum(len(dense.numbers) for dense in cast("dict[int, Dense]", store.decoded.lengths).values())
-        assert blocks > 5 * looked_up
-        assert unpacked <= looked_up
+        asked = [(scoring_module, "read_lengths"), (keyword_lists_module, "lengths")]
+        stages, statements = calls_finding_half(stores, held, asked)
+        tables = cast("dict[int, HeldTable]", store.decoded.lengths).values()
+        blocks = sum(kept_bytes(table) for table in tables) // (4 << store.shape.lengths_shift)
+        assert blocks > 5 * statements
+        assert statements == stages
 
 
 def test_the_positions_a_phrase_reads_are_unpacked_by_one_call_a_list_not_one_for_each_block() -> None:

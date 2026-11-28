@@ -3,8 +3,10 @@ use std::sync::{Arc, LazyLock};
 
 use crate::lists::{Coded, block, positioned};
 use crate::merge::{Fed, Merger};
+use crate::packed::deflated;
 use crate::packs::{counted, entries};
 use crate::postings::{Filed, Shape};
+use crate::ranges::{Bounds, Ranges, ranges_read};
 use crate::segment::{Held, Passages, Written};
 use crate::words::Table;
 
@@ -42,6 +44,32 @@ static TABLE: LazyLock<Result<Table, String>> = LazyLock::new(|| {
     }
     Table::new(&stored)
 });
+
+pub fn ranges_body(ids: &[i64], sizes: &[u8], best: &[u8]) -> Result<Vec<u8>, String> {
+    let first = ids.first().ok_or_else(|| "ranges hold one id at least".to_owned())?;
+    let mut body = first.to_le_bytes().to_vec();
+    body.extend_from_slice(
+        &u32::try_from(ids.len())
+            .map_err(|error| error.to_string())?
+            .to_le_bytes(),
+    );
+    for pair in ids.windows(2) {
+        let gap = u32::try_from(pair[1] - pair[0]).map_err(|error| error.to_string())?;
+        body.extend_from_slice(&gap.to_le_bytes());
+    }
+    body.extend(sizes.iter().map(|size| size - 1));
+    body.extend_from_slice(best);
+    deflated(&body, None)
+}
+
+pub fn held_ranges(ids: &[i64], sizes: &[u8], best: &[u8]) -> Result<Ranges, String> {
+    let bounds = Bounds {
+        low: ids.first().copied().unwrap_or(0),
+        high: ids.last().copied().unwrap_or(0),
+        chunks: sizes.iter().map(|&size| usize::from(size)).sum(),
+    };
+    ranges_read(&ranges_body(ids, sizes, best)?, &bounds)
+}
 
 pub fn refused<T>(found: Result<T, String>, saying: &str) -> bool {
     found.is_err_and(|problem| problem.contains(saying))

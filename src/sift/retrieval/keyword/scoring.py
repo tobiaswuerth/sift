@@ -1,42 +1,29 @@
-from collections.abc import Iterator, Mapping, Sequence
+import itertools
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ids, Mask, Scores, among, first, last
-from sift.domain.query.expressions import And, Expression, Leaf, Or, Phrase, Prefix, Term
-from sift.domain.rank.bm25 import TOP, slack, term_scores, unquantized
+from sift.domain.arrays import integers, reals
+from sift.domain.codec.postings import HeldBlock
+from sift.domain.codec.shape import shaped
+from sift.domain.query.expressions import Expression, Leaf
+from sift.domain.rank.best import Best, offered
+from sift.domain.rank.bm25 import slack
+from sift.domain.rank.pruned import ExactPlan, LeafPlan, PartPlan, ScoringPlan, SegmentPlan, nodes_of
+from sift.retrieval.allowed import AllowedDocuments
+from sift.retrieval.keyword.leaves import Expired
 from sift.retrieval.keyword.lists import (
     Opened,
     PostingArrays,
     Ranged,
     StoredList,
     Whole,
-    lengths_at,
-    live,
-    postings_in,
-    slices,
+    dead,
+    decoded_blocks,
+    lengths_read,
+    owners,
 )
-
-
-@dataclass(eq=False, frozen=True, slots=True)
-class Exact:
-    ranges: Ids
-    places: Ids
-    scores: Scores
-
-
-@dataclass(frozen=True, slots=True)
-class Bounded:
-    held: Ranged
-    slack: float
-
-
-@dataclass(frozen=True, slots=True)
-class Scored:
-    exact: tuple[Exact, ...]
-    bounded: tuple[Bounded, ...]
-    size: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,90 +34,88 @@ class Query:
     bounding: Mapping[Leaf, float]
     average: float
 
-    @property
-    def flat(self) -> bool:
-        return isinstance(self.expression, Or) and all(
-            isinstance(part, Term | Phrase | Prefix) for part in self.expression.parts
-        )
 
-    @property
-    def conjunction(self) -> bool:
-        return isinstance(self.expression, And) and all(
-            isinstance(part, Term | Phrase | Prefix) for part in self.expression.parts
-        )
-
-    def most(self, leaf: Leaf) -> float:
-        return self.bounding[leaf] * TOP
+def _owner(wanted: tuple[int, int]) -> int:
+    return wanted[0]
 
 
-def _sorted(parts: Sequence[PostingArrays]) -> PostingArrays:
-    places = np.concatenate([np.zeros(0, np.int64), *(here for here, _ in parts)])
-    values = np.concatenate([np.zeros(0, np.int64), *(counts for _, counts in parts)])
-    order = np.argsort(places, kind="stable")
-    return places[order], values[order]
+@dataclass(eq=False, slots=True)
+class ListReads:
+    store: Opened
+    parts: Sequence[Ranged]
+    best: Best
+    allowed: AllowedDocuments | None
+    expired: Expired
+
+    def read_blocks(self, wanted: list[tuple[int, int]]) -> list[HeldBlock]:
+        found: list[HeldBlock] = []
+        for part, each in itertools.groupby(wanted, key=_owner):
+            numbers = [number for _, number in each]
+            held = decoded_blocks(self.store, self.parts[part], numbers)
+            found += [held[number] for number in numbers]
+        return found
+
+    def read_lengths(self, wanted: list[tuple[int, int]]) -> list[bytes]:
+        found: list[bytes] = []
+        for segment, each in itertools.groupby(wanted, key=_owner):
+            found += lengths_read(self.store, self.store.segments[segment].id, [number for _, number in each])
+        return found
+
+    def offered(self, places: bytes, scores: bytes) -> tuple[float, int]:
+        chunks, held = owners(self.store, integers(places))
+        values = reals(scores)
+        if self.allowed is not None:
+            keep = self.allowed.documents(held)
+            chunks, held, values = chunks[keep], held[keep], values[keep]
+        self.best = offered(self.best, chunks, held, values)
+        return self.best.threshold, len(self.best.chunks)
+
+    def out_of_time(self) -> bool:
+        return self.expired()
 
 
-def _scores(store: Opened, places: Ids, counts: Ids, average: float) -> Scores:
-    return term_scores(counts, lengths_at(store, places), average)
+def _ranged(found: list[StoredList] | PostingArrays) -> list[Ranged]:
+    return [] if isinstance(found, tuple) else [held for held in found if isinstance(held, Ranged)]
 
 
-def _exact(store: Opened, places: Ids, counts: Ids, average: float) -> Exact:
-    return Exact(places >> store.shape.range_shift, places, _scores(store, places, counts, average))
-
-
-def scored(store: Opened, query: Query, found: list[StoredList] | PostingArrays) -> Scored:
+def _exact(found: list[StoredList] | PostingArrays, at: Mapping[int, int]) -> list[ExactPlan]:
     if isinstance(found, tuple):
-        places, counts = found
-        return Scored((_exact(store, places, counts, query.average),), (), len(places))
-    whole = [live(store, held.segment, held.places, held.counts) for held in found if isinstance(held, Whole)]
-    exact = (_exact(store, *_sorted(whole), query.average),) if whole else ()
+        return [ExactPlan(*found, None)]
+    return [ExactPlan(held.places, held.counts, at[held.segment]) for held in found if isinstance(held, Whole)]
+
+
+def _stored(found: list[StoredList] | PostingArrays) -> list[StoredList]:
+    return [] if isinstance(found, tuple) else found
+
+
+def plan_of(
+    store: Opened,
+    query: Query,
+    lists: Mapping[Leaf, list[StoredList] | PostingArrays],
+    best: Best,
+    batches: tuple[int, int],
+) -> tuple[ScoringPlan, list[Ranged]]:
+    at = {segment.id: number for number, segment in enumerate(store.segments)}
+    owned = [_ranged(lists[leaf]) for leaf in query.leaves]
+    starts = list(itertools.accumulate(map(len, owned), initial=0))
+    leaves = [
+        LeafPlan(_exact(lists[leaf], at), list(range(start, end)), query.bounding[leaf], query.weight[leaf])
+        for leaf, start, end in zip(query.leaves, starts[:-1], starts[1:], strict=True)
+    ]
+    parts = [held for own in owned for held in own]
+    held = {each.segment for leaf in query.leaves for each in _stored(lists[leaf])}
+    none = np.zeros(0, np.int64)
+    segments = [
+        SegmentPlan(
+            segment.first,
+            segment.last,
+            dead(store, segment.id).values if segment.id in held else none,
+            store.decoded.lengths.get(segment.id),
+        )
+        for segment in store.segments
+    ]
     averages = {segment.id: segment.average for segment in store.segments}
-    bounded = tuple(
-        Bounded(held, slack(query.average, averages[held.segment])) for held in found if isinstance(held, Ranged)
-    )
-    size = sum(len(each.places) for each in exact) + sum(last(each.held.ranges.ends) for each in bounded)
-    return Scored(exact, bounded, size)
-
-
-def bounds(query: Query, lists: Mapping[Leaf, Scored]) -> tuple[int, Scores, dict[Leaf, Mask]]:
-    found = [each.ranges for held in lists.values() for each in held.exact if len(each.ranges)]
-    found += [each.held.ranges.ids for held in lists.values() for each in held.bounded]
-    if not found:
-        return 0, np.zeros(0), {leaf: np.zeros(0, np.bool_) for leaf in query.leaves}
-    start = min(first(each) for each in found)
-    span = max(last(each) for each in found) - start + 1
-    bound, present = np.zeros(span), dict[Leaf, Mask]()
-    for leaf in query.leaves:
-        here = np.zeros(span)
-        for each in lists[leaf].exact:
-            np.maximum.at(here, each.ranges - start, each.scores)
-        for each in lists[leaf].bounded:
-            at = each.held.ranges.ids - start
-            here[at] = np.maximum(here[at], unquantized(each.held.ranges.best) * each.slack)
-        bound += query.bounding[leaf] * here
-        present[leaf] = here > 0
-    return start, bound, present
-
-
-def _bounded_within(store: Opened, held: Scored, group: Ids) -> Iterator[PostingArrays]:
-    for each in held.bounded:
-        ids = each.held.ranges.ids
-        at = np.minimum(np.searchsorted(ids, group), len(ids) - 1)
-        hit = among(group, each.held.ids)
-        if hit.any():
-            yield postings_in(store, each.held, at[hit])
-
-
-def within(store: Opened, query: Query, held: Scored, group: Ids) -> tuple[Ids, Scores]:
-    places, scores = [np.zeros(0, np.int64)], [np.zeros(0)]
-    for each in held.exact:
-        take = slices(np.searchsorted(each.ranges, group), np.searchsorted(each.ranges, group, side="right"))
-        places.append(each.places[take])
-        scores.append(each.scores[take])
-    read, counts = _sorted(list(_bounded_within(store, held, group)))
-    if len(read):
-        places.append(read)
-        scores.append(_scores(store, read, counts, query.average))
-    joined = np.concatenate(places)
-    order = np.argsort(joined, kind="stable")
-    return joined[order], np.concatenate(scores)[order]
+    told = [PartPlan(at[part.segment], part.ranges, slack(query.average, averages[part.segment])) for part in parts]
+    numbers = (query.average, shaped(store.shape), *batches)
+    nodes = nodes_of(query.expression, query.leaves)
+    return ScoringPlan(segments, told, leaves, nodes, numbers, (best.threshold, len(best.chunks))), parts

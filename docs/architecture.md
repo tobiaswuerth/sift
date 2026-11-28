@@ -46,6 +46,9 @@ diacritics removed, reproduced exactly as a table of every code point's separato
   Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): the summed best scores of a range bound
   every passage in it, so ranges are scored best bound first until none left can beat the k-th best. Words that
   together cannot reach it are read only where the others bring a passage within reach.
+- The scoring runs in the compiled extension without holding Python's interpreter lock, so searches running at once
+  score side by side. It asks Python only for what the store holds: the blocks and lengths a batch of ranges needs,
+  read once a search and kept decoded in the extension's memory, and the documents of the passages it ranks.
 - Phrases are bounded by their words, then matched by their positions; a prefix is expanded from the terms of the
   packs between its bounds, counted no further than the most words a search expands. With a time budget, a search
   stops once it is spent and has found anything, returning the best so far marked `partial`.

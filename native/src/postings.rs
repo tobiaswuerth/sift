@@ -6,16 +6,17 @@ use crate::lists::{Block, Coded, Lists, MOST_BLOCK, block, each_of, list};
 use crate::numbers::narrow;
 use crate::packed::deflated;
 use crate::packs::{Pack, Packer};
+use crate::ranges::Ranges;
 
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
-const TOP: f64 = K1 + 1.0;
-const STEPS: f64 = 255.0;
+pub const TOP: f64 = K1 + 1.0;
+pub const STEPS: f64 = 255.0;
 const RANGE: usize = 6;
 const MOST_RANGE_SHIFT: u32 = 8;
 pub const MOST_LENGTHS_SHIFT: u32 = 20;
 const MISPLACED: &str = "a block holds postings outside its ranges";
-const UNEVEN: &str = "a list is read with a block for each number, and an end for each range";
+const UNEVEN: &str = "a list is read with a block for each number";
 const FAR_APART: &str = "ranges not ascending, or more than 2**32 apart: more than ranges hold";
 const DISORDERED: &str = "the passages of a list are out of their order";
 
@@ -45,12 +46,6 @@ pub struct Row {
 }
 
 pub type Piece = (Arc<str>, usize, Coded);
-
-pub struct Owning<'a> {
-    pub numbers: &'a [usize],
-    pub ids: &'a [i64],
-    pub ends: &'a [i64],
-}
 
 pub struct Ranged {
     pub term: Box<str>,
@@ -137,7 +132,7 @@ impl Shape {
     }
 }
 
-fn score(count: i64, length: u32, average: f64) -> f64 {
+pub fn score(count: i64, length: u32, average: f64) -> f64 {
     let times = f64::from(u32::try_from(count).unwrap_or(u32::MAX));
     times * TOP / (times + K1 * (1.0 - B + B * f64::from(length) / average))
 }
@@ -310,33 +305,35 @@ pub fn joined(term: &str, parts: &[&Postings], average: f64, shape: Shape) -> Re
     })
 }
 
-fn owned(row: &[u8], number: usize, owning: &Owning, shape: Shape) -> Result<Block, String> {
+fn owned(row: &[u8], number: usize, ranges: &Ranges, shape: Shape) -> Result<Block, String> {
     let found = block(row)?;
-    let total = owning.ends.last().copied().unwrap_or(0);
     let start = number.checked_mul(shape.block);
-    let start = start.and_then(|start| i64::try_from(start).ok());
-    let most = i64::try_from(shape.block).unwrap_or(i64::MAX);
-    let placed = start.map_or(0, |start| total.saturating_sub(start).clamp(0, most));
-    if i64::try_from(found.ids.len()).ok() != Some(placed) {
+    let placed = start.map_or(0, |start| ranges.total().saturating_sub(start).min(shape.block));
+    if found.ids.len() != placed {
         let held = found.ids.len();
         return Err(format!("a block holds {held} postings where its ranges place {placed}"));
     }
-    let start = start.unwrap_or(0);
-    let mut range = owning.ends.partition_point(|&end| end <= start);
+    let (start, ends) = (start.unwrap_or(0), ranges.ends());
+    let mut range = ends.partition_point(|&end| end <= start);
     for (index, &id) in (start..).zip(&found.ids) {
-        while owning.ends.get(range).is_some_and(|&end| end <= index) {
+        while ends.get(range).is_some_and(|&end| end <= index) {
             range += 1;
         }
-        if owning.ids.get(range) != Some(&(id >> shape.range_shift)) {
+        if ranges.ids().get(range) != Some(&(id >> shape.range_shift)) {
             return Err(MISPLACED.to_owned());
         }
     }
     Ok(found)
 }
 
-pub fn owned_blocks<R: AsRef<[u8]> + Sync>(rows: &[R], owning: &Owning, shape: Shape) -> Result<Vec<Block>, String> {
-    if owning.numbers.len() != rows.len() || owning.ids.len() != owning.ends.len() {
+pub fn owned_blocks<R: AsRef<[u8]> + Sync>(
+    rows: &[R],
+    numbers: &[usize],
+    ranges: &Ranges,
+    shape: Shape,
+) -> Result<Vec<Block>, String> {
+    if numbers.len() != rows.len() {
         return Err(UNEVEN.to_owned());
     }
-    each_of(rows, |at, row| owned(row, owning.numbers[at], owning, shape))
+    each_of(rows, |at, row| owned(row, numbers[at], ranges, shape))
 }

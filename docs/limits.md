@@ -46,9 +46,6 @@ Generated from the code by `python -m tools limits --write`; a test checks that 
 | `sift.app.vector_candidates` | `MOST_WIDER` | `WIDER**2` |
 | `sift.domain.codec.codes` | `WORD_BYTES` | `8` |
 | `sift.domain.codec.codes` | `MOST_BITS` | `int(np.iinfo(np.uint16).max)` |
-| `sift.domain.codec.postings` | `GAP_BYTES` | `4` |
-| `sift.domain.codec.postings` | `COUNT_BYTES` | `1` |
-| `sift.domain.codec.postings` | `BEST_BYTES` | `1` |
 | `sift.domain.codec.shape` | `MOST_RANGE_SHIFT` | `8` |
 | `sift.domain.codec.shape` | `MOST_BLOCK` | `1 << 12` |
 | `sift.domain.codec.shape` | `MOST_LENGTHS_SHIFT` | `20` |

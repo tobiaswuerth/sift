@@ -1,8 +1,10 @@
 mod building;
 mod clusters;
 mod codes;
+mod held;
 mod lists;
 mod merging;
+mod searching;
 
 use mimalloc::MiMalloc;
 use pyo3::buffer::PyBuffer;
@@ -58,7 +60,15 @@ fn native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(codes::scanned_codes, module)?)?;
     module.add_function(wrap_pyfunction!(clusters::majority_centroids, module)?)?;
     module.add_function(wrap_pyfunction!(lists::blocked_all, module)?)?;
-    module.add_function(wrap_pyfunction!(lists::blocked_within, module)?)?;
+    module.add_class::<held::HeldRanges>()?;
+    module.add_class::<held::HeldBlock>()?;
+    module.add_class::<held::HeldTable>()?;
+    module.add_function(wrap_pyfunction!(held::ranges_kept, module)?)?;
+    module.add_function(wrap_pyfunction!(held::ranges_arrays, module)?)?;
+    module.add_function(wrap_pyfunction!(held::blocked_within, module)?)?;
+    module.add_function(wrap_pyfunction!(held::postings_of, module)?)?;
+    module.add_function(wrap_pyfunction!(held::kept_bytes, module)?)?;
+    module.add_function(wrap_pyfunction!(searching::searched, module)?)?;
     module.add_function(wrap_pyfunction!(lists::occurrences, module)?)?;
     module.add_function(wrap_pyfunction!(lists::phrase_counts, module)?)?;
     module.add_function(wrap_pyfunction!(lists::summed_by_id, module)?)?;

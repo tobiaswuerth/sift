@@ -19,7 +19,12 @@ BUILD_CONSTRAINTS = ".github/requirements-build.txt"
 CRATE = "native/Cargo.toml"
 CRATE_COVERAGE = "native/target/coverage"
 LLVM_COV = "0.9.2"
-CRATE_REACHED_BY = ("tests/unit/domain/codec", "tests/unit/storage", "tests/unit/retrieval/keyword")
+CRATE_REACHED_BY = (
+    "tests/unit/domain/codec",
+    "tests/unit/domain/rank",
+    "tests/unit/storage",
+    "tests/unit/retrieval/keyword",
+)
 CRATE_TESTS = r"src[/\\]tests"
 BINDING = Path("native/src/python")
 NO_BINDING = (

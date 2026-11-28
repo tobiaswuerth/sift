@@ -6,9 +6,10 @@ from collections.abc import Sequence
 import numpy as np
 
 from sift.domain.arrays import Ids
-from sift.domain.codec.postings import PACKED, RANGES_HEAD, RAW, blocked_all, occurrences
+from sift.domain.codec.postings import PACKED, RAW, blocked_all, occurrences
 
 BLOCK_HEAD = struct.Struct("<qI")
+RANGES_HEAD = struct.Struct("<qI")
 PACKED_FROM = 64
 
 

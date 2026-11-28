@@ -57,6 +57,13 @@ def test_a_block_missing_or_of_another_size_than_its_ranges_say_is_damage(sql: s
             search(stores, Term("w0"), 10)
 
 
+def test_the_lengths_of_passages_gone_from_the_keyword_index_are_damage() -> None:
+    with collections([[prose(Draws(np.random.default_rng(7)), 60)]]) as (stores, _):
+        stores[0].transaction.connection.execute("DELETE FROM keyword_lengths")
+        with pytest.raises(DamagedError, match="the lengths of some chunks are missing from the keyword index"):
+            search(stores, Term("w0"), 10)
+
+
 def test_the_positions_of_a_short_list_gone_since_the_list_was_read_are_damage() -> None:
     notes: Round = {f"n{n}.md": ("", "N", "alpha beta" if n < 2 else "filler") for n in range(6)}
     with collections([[notes]]) as (stores, _):

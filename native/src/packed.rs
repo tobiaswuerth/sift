@@ -49,7 +49,7 @@ fn too_large(most: usize) -> String {
     format!("a packed list unpacks to more than {most} bytes, or ends early")
 }
 
-fn inflated(data: &[u8], most: usize) -> Result<Vec<u8>, String> {
+pub fn inflated(data: &[u8], most: usize) -> Result<Vec<u8>, String> {
     let mut unpacking = Decompress::new(true);
     let mut found = Vec::with_capacity((data.len() * 4).max(ROOM).min(most + 1));
     loop {
