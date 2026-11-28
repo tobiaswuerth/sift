@@ -1,3 +1,4 @@
+import signal
 import socket
 import ssl
 from dataclasses import replace
@@ -10,7 +11,7 @@ from sift.api.errors import InvalidRequestError, ModelUnavailableError, Problem,
 from sift.api.events import Event, Lending, Phase, PhaseDone, PhaseStarted
 from sift.api.serving import ALL_INTERFACES, WORKER_PORT, Served, ServeWorker, WorkerAddress
 from sift.inference.loading import Deferred
-from sift.interfaces.server.serving import bound
+from sift.interfaces.server.serving import STOPPING_SIGNALS, bound
 from sift.interfaces.worker.keys import worker_key
 from sift.interfaces.worker.serving import LEND, Lend, WorkerServer, lend, lent
 from sift.settings import Settings
@@ -83,6 +84,18 @@ def test_ctrl_c_while_the_worker_serves_stops_it_and_lets_another_start(settings
     how = replace(quick(), run=interrupted)
     for _ in range(2):
         assert lend(settings, HERE, VERSION, unheard, how).url.startswith(f"https://{LOOPBACK}:")
+
+
+def test_a_signal_to_stop_as_the_worker_starts_acts_as_ctrl_c_and_lets_another_start(settings: Settings) -> None:
+    def stopped_as_it_binds(_port: int, _host: str) -> socket.socket:
+        signal.raise_signal(STOPPING_SIGNALS[0])
+        raise AssertionError("the worker went on starting after a signal to stop")
+
+    before, ran = signal.getsignal(STOPPING_SIGNALS[0]), list[WorkerServer]()
+    with pytest.raises(KeyboardInterrupt):
+        lend(settings, HERE, VERSION, unheard, replace(quick(), bind=stopped_as_it_binds))
+    lend(settings, HERE, VERSION, unheard, replace(quick(), run=ran.append))
+    assert (signal.getsignal(STOPPING_SIGNALS[0]) is before, len(ran)) == (True, 1)
 
 
 def test_a_server_error_comes_out_as_it_is(settings: Settings) -> None:

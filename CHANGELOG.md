@@ -10,6 +10,9 @@ versions follow [Semantic Versioning](https://semver.org/). Releases before 2.0 
 
 - In a terminal that shows colours, `sift worker` printed the colour codes of its hint on where to set
   `SIFT_EMBED_REMOTE` as text (`\x1b[2m…\x1b[0m`) instead of dimming it.
+- Ctrl+C, or a signal to stop, that reached `sift serve` after it wrote the file saying where it listens but before
+  it began to answer could end it with exit code 130 or 1, at times leaving that file behind, or leave it hanging. It
+  now stops as at any other time.
 
 ### Changed
 

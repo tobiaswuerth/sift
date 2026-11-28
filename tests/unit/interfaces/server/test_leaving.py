@@ -1,17 +1,19 @@
 import asyncio
 import itertools
+import signal
 import threading
 
 import pytest
 
 from sift.api.serving import ServeHome
 from sift.interfaces.server.activity import Activity
-from sift.interfaces.server.endpoint import found, own_endpoint
+from sift.interfaces.server.endpoint import found, own_endpoint, written
 from sift.interfaces.server.serving import (
     LEFT_IDLE,
     HomeServer,
     Serve,
     held,
+    listing,
     on_a_selector,
     serve,
     watched_leaving,
@@ -46,7 +48,7 @@ def test_a_home_process_told_to_leave_when_idle_stops_by_itself(
 
 
 def test_a_home_process_leaving_is_no_longer_found_from_the_moment_it_decides_to(settings: Settings) -> None:
-    with held(settings, ServeHome(port=0), "2.0.0", quiet) as running:
+    with held(settings, ServeHome(port=0), "2.0.0", quiet) as running, listing(running, written):
         assert own_endpoint(settings).exists()
         watched_leaving(running, 0, threading.Event(), 0.01)
         assert (running.server.should_exit, own_endpoint(settings).exists()) == (True, False)
@@ -54,7 +56,7 @@ def test_a_home_process_leaving_is_no_longer_found_from_the_moment_it_decides_to
 
 def test_a_home_process_stopped_before_it_was_idle_long_enough_stops_its_watch(settings: Settings) -> None:
     def interrupted(_running: HomeServer) -> None:
-        raise KeyboardInterrupt
+        signal.raise_signal(signal.SIGINT)
 
     served = serve(settings, ServeHome(port=0, idle_exit=3_600), "2.0.0", quiet, Serve(interrupted, idle_every=0.01))
     assert (served.url.startswith("http://127.0.0.1:"), found(settings)) == (True, None)

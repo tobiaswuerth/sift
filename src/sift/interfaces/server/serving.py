@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Callable, Coroutine, Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing, contextmanager
+from contextlib import AbstractContextManager, closing, contextmanager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -160,6 +160,7 @@ class Serve:
     keep_alive_seconds: int = KEEP_ALIVE_SECONDS
     body_seconds: float = BODY_SECONDS
     most_connections: int = MOST_CONNECTIONS
+    write_endpoint: Callable[[Path, Endpoint], None] = written
 
 
 SERVE = Serve()
@@ -172,6 +173,16 @@ def reading_pool(workers: int) -> Generator[ThreadPoolExecutor]:
         yield pool
     finally:
         pool.shutdown(wait=True, cancel_futures=True)
+
+
+@contextmanager
+def _signals_sent_to(handler: Callable[[int, FrameType | None], None], signals: tuple[int, ...]) -> Generator[None]:
+    kept = {each: signal.signal(each, handler) for each in signals}
+    try:
+        yield
+    finally:
+        for each, previous in kept.items():
+            signal.signal(each, previous)
 
 
 @contextmanager
@@ -217,27 +228,28 @@ def held(
             timeout_keep_alive=how.keep_alive_seconds,
             limit_concurrency=how.most_connections,
         )
-        written(listed, endpoint)
         server = StoppingServer(config, partial(_stopping, serving, listed, report))
         try:
             yield HomeServer(endpoint, serving, server, listening, listed)
         finally:
-            _unlisted(listed)
             serving.watch.let_go()
+
+
+@contextmanager
+def listing(running: HomeServer, write: Callable[[Path, Endpoint], None]) -> Generator[None]:
+    write(running.listed, running.endpoint)
+    try:
+        yield
+    finally:
+        _unlisted(running.listed)
 
 
 def _interrupted(_signal: int, _frame: FrameType | None) -> None:
     raise KeyboardInterrupt
 
 
-@contextmanager
-def stopped_as_by_ctrl_c() -> Generator[None]:
-    kept = {each: signal.signal(each, _interrupted) for each in STOPPING_SIGNALS}
-    try:
-        yield
-    finally:
-        for each, handler in kept.items():
-            signal.signal(each, handler)
+def stopped_as_by_ctrl_c() -> AbstractContextManager[None]:
+    return _signals_sent_to(_interrupted, STOPPING_SIGNALS)
 
 
 def watched_leaving(running: HomeServer, seconds: int, stop: threading.Event, every: float) -> None:
@@ -270,12 +282,10 @@ def serve(settings: Settings, request: ServeHome, version: str, report: Reporter
     with (
         stopped_as_by_ctrl_c(),
         held(settings, request, version, report, how) as running,
+        _signals_sent_to(running.server.handle_exit, (signal.SIGINT, *STOPPING_SIGNALS)),
+        listing(running, how.write_endpoint),
         _leaving_when_idle(running, request.idle_exit, how.idle_every),
     ):
-        try:
-            report(Listening(running.url, str(settings.home)))
-            how.run(running)
-        except KeyboardInterrupt:
-            running.server.should_exit = True
-            _stopping(running.serving, running.listed, report)
+        report(Listening(running.url, str(settings.home)))
+        how.run(running)
     return Served(running.url)

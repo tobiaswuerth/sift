@@ -12,7 +12,7 @@ from sift.api.events import Event
 from sift.api.serving import ServeHome
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
-from sift.interfaces.server.serving import SERVE, HomeServer, Serve, held, served_until_stopped
+from sift.interfaces.server.serving import SERVE, HomeServer, Serve, held, listing, served_until_stopped
 from sift.settings import Settings
 from tests.waits import joined, until
 
@@ -27,7 +27,7 @@ def running(
     how: Serve = SERVE,
 ) -> Generator[HomeServer]:
     heard, served = list[Event](), dataclasses.replace(how, handled=handled)
-    with held(settings, ServeHome(port=0), of, heard.append, served) as server:
+    with held(settings, ServeHome(port=0), of, heard.append, served) as server, listing(server, served.write_endpoint):
         thread = threading.Thread(target=served_until_stopped, args=(server,), daemon=True)
         thread.start()
         assert until(lambda: server.server.started), "the home server did not start within 30 s"
