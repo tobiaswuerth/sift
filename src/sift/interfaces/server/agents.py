@@ -139,7 +139,7 @@ async def agents_answered(serving: Serving, handled: Mapping[str, Handled], requ
     unwelcome = _unwelcome(request)
     if unwelcome is not None:
         return unwelcome
-    body = await body_of(request, serving.body_seconds)
+    body = await body_of(request, seconds=serving.body_seconds)
     if isinstance(body, UnreadBody):
         return _refused(body.status, NOT_A_MESSAGE, body.error.message)
     try:

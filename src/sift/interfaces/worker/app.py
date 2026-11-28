@@ -18,9 +18,10 @@ from sift.domain.text.decoding import encodable
 from sift.domain.text.json_values import deeper_than
 from sift.inference.loading import Resting
 from sift.inference.remote import EMBED, INFO, MODEL_HEADER, MOST_TEXTS, RERANK
-from sift.interfaces.server.app import body_of
+from sift.interfaces.server.app import TOO_LONG_BODY, UnreadBody, body_of
 
 MOST_BODY = 32 << 20
+BODY_SECONDS = 300.0
 MOST_NESTING = 4
 OCTETS = "application/octet-stream"
 WRONG_KEY = "wrong key"
@@ -57,9 +58,9 @@ def _texts(value: object) -> list[str] | None:
 async def _asked(lent: Lent, request: Request) -> dict[str, object] | Response:
     if not _authorized(lent, request):
         return PlainTextResponse(WRONG_KEY, status_code=401)
-    body = await body_of(request, MOST_BODY)
-    if body is None:
-        return PlainTextResponse(TOO_LONG, status_code=413)
+    body = await body_of(request, seconds=BODY_SECONDS, most=MOST_BODY)
+    if isinstance(body, UnreadBody):
+        return PlainTextResponse(TOO_LONG if body is TOO_LONG_BODY else body.error.message, status_code=body.status)
     try:
         text = body.decode()
         read = None if deeper_than(text, MOST_NESTING) else cast("object", json.loads(text))

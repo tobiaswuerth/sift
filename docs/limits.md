@@ -139,6 +139,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.interfaces.server.serving` | `Serve.body_seconds` | `BODY_SECONDS` |
 | `sift.interfaces.server.serving` | `Serve.most_connections` | `MOST_CONNECTIONS` |
 | `sift.interfaces.worker.app` | `MOST_BODY` | `32 << 20` |
+| `sift.interfaces.worker.app` | `BODY_SECONDS` | `300.0` |
 | `sift.interfaces.worker.app` | `MOST_NESTING` | `4` |
 | `sift.interfaces.worker.keys` | `TOKEN_BYTES` | `32` |
 | `sift.interfaces.worker.serving` | `GRACE_SECONDS` | `10` |

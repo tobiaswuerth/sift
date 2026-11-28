@@ -316,7 +316,7 @@ class UnreadBody:
 TOO_LONG_BODY, SLOW_BODY, LEFT_BODY = UnreadBody(413, TOO_LARGE), UnreadBody(408, SLOW), UnreadBody(400, LEFT)
 
 
-async def body_of(request: Request, seconds: float, most: int = MOST_BODY) -> bytes | UnreadBody:
+async def body_of(request: Request, *, seconds: float, most: int = MOST_BODY) -> bytes | UnreadBody:
     read = bytearray()
     try:
         async with asyncio.timeout(seconds):
@@ -336,7 +336,7 @@ async def _command(serving: Serving, name: str, handled: Handled, request: Reque
     given = (request.headers.get("authorization") or "").encode()
     if not hmac.compare_digest(given, f"Bearer {serving.token}".encode()):
         return _refused(UNAUTHORIZED, 401)
-    body = await body_of(request, serving.body_seconds)
+    body = await body_of(request, seconds=serving.body_seconds)
     if isinstance(body, UnreadBody):
         return _refused(body.error, body.status)
     try:
