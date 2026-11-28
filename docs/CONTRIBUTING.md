@@ -12,12 +12,12 @@ uv sync
 uv run pre-commit install
 ```
 
-A Rust extension, the crate in `native/`, builds, merges and searches the lists of the keyword index and clusters the
-passages into their topical order. Install [rustup](https://rustup.rs) and a C compiler first: `uv sync` builds the
-extension, and builds it again whenever the crate changed. `rust-toolchain.toml` names the toolchain, which rustup
-fetches on the first build. Every package carries the licences of the crates built into the extension, in
-`native/THIRD-PARTY-NOTICES`: after a change of the crate's dependencies, `python -m tools notices --write` regenerates
-that file.
+A Rust extension, the crate in `native/`, builds, merges and searches the lists of the keyword index, clusters the
+passages into their topical order, and scans the codes of the vectors for semantic search. Install
+[rustup](https://rustup.rs) and a C compiler first: `uv sync` builds the extension, and builds it again whenever the
+crate changed. `rust-toolchain.toml` names the toolchain, which rustup fetches on the first build. Every package carries
+the licences of the crates built into the extension, in `native/THIRD-PARTY-NOTICES`: after a change of the crate's
+dependencies, `python -m tools notices --write` regenerates that file.
 
 ## The gate
 

@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterator
 from typing import NamedTuple, cast
 
 import numpy as np
@@ -7,7 +8,18 @@ from numpy.typing import NDArray
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import ChunkId, DocumentId
 from sift.domain.arrays import STORED_HALF, Ids, among, ascending, distinct, ints
-from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
+from sift.domain.codec.codes import (
+    MOST_BITS,
+    Bits,
+    Halves,
+    HeldCodes,
+    code_bytes,
+    codes,
+    filled,
+    filling,
+    finished,
+    width_of,
+)
 from sift.domain.errors import DamagedError
 from sift.domain.text.embedding import RECIPE
 from sift.storage.database import Count, IdRow, Reading, Writing, rows, run, run_each
@@ -163,21 +175,44 @@ def vector_generation(transaction: Reading) -> int:
     return held.n
 
 
-def codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Bits]:
+class _CodesHeld(NamedTuple):
+    rows: int
+    size: int
+
+
+def _held(transaction: Reading) -> _CodesHeld:
     (held,) = rows(transaction, Count, "SELECT vectors FROM counts")
-    size = code_bytes(width_held(transaction) or 0)
-    ids, bits = np.empty(held.n, np.int64), np.empty((held.n, size), np.uint8)
+    return _CodesHeld(held.n, code_bytes(width_held(transaction) or 0))
+
+
+def _batches(transaction: Reading, held: _CodesHeld, read: int) -> Iterator[tuple[int, Ids, bytes]]:
     done = 0
     cursor = transaction.connection.execute(CODES)
     while batch := cast("list[tuple[int, bytes]]", cursor.fetchmany(read)):
-        if done + len(batch) > held.n or any(len(row[1]) != size for row in batch):
+        if done + len(batch) > held.rows or any(len(row[1]) != held.size for row in batch):
             raise StoreUnavailableError(DAMAGED_CODES, CODES_REMEDY, code=Problem.STORE_DAMAGED)
-        ids[done : done + len(batch)] = np.fromiter((row[0] for row in batch), np.int64, len(batch))
-        bits[done : done + len(batch)] = np.frombuffer(b"".join(row[1] for row in batch), np.uint8).reshape(-1, size)
+        yield done, np.fromiter((row[0] for row in batch), np.int64, len(batch)), b"".join(row[1] for row in batch)
         done += len(batch)
-    if done != held.n:
+    if done != held.rows:
         raise StoreUnavailableError(DAMAGED_CODES, CODES_REMEDY, code=Problem.STORE_DAMAGED)
+
+
+def codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Bits]:
+    held = _held(transaction)
+    ids, bits = np.empty(held.rows, np.int64), np.empty((held.rows, held.size), np.uint8)
+    for done, batch, joined in _batches(transaction, held, read):
+        ids[done : done + len(batch)] = batch
+        bits[done : done + len(batch)] = np.frombuffer(joined, np.uint8).reshape(-1, held.size)
     return ids, bits
+
+
+def resident_codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, HeldCodes]:
+    held = _held(transaction)
+    ids, made = np.empty(held.rows, np.int64), filling(held.rows, held.size)
+    for done, batch, joined in _batches(transaction, held, read):
+        ids[done : done + len(batch)] = batch
+        filled(made, joined)
+    return ids, finished(made)
 
 
 def vectors_of(transaction: Reading, chunks: Ids) -> tuple[Ids, Halves]:

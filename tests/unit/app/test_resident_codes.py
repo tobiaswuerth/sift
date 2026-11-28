@@ -16,6 +16,7 @@ from sift.app.resident import CodesAt, ResidentCodes
 from sift.app.searching import Watching
 from sift.app.similar import similar
 from sift.app.vsearch import vsearch
+from sift.domain.codec.codes import packed
 from sift.retrieval.vector.nearest import Coded, coded
 from tests.files import write
 from tests.homes import home_of, indexed, quiet
@@ -70,9 +71,9 @@ def test_codes_held_for_every_search_cannot_be_written(home: Path) -> None:
     counting = Counting()
     found(home, counting)
     for _, held in counting.held.held.values():
-        for array in (held.ids, held.bits, held.words):
-            with pytest.raises(ValueError, match="WRITEABLE"):
-                array.flags.writeable = True
+        with pytest.raises(ValueError, match="WRITEABLE"):
+            held.ids.flags.writeable = True
+        assert not hasattr(held.codes.native, "extend")
 
 
 def test_codes_are_read_again_once_the_store_s_vectors_change(home: Path, tmp_path: Path) -> None:
@@ -110,7 +111,7 @@ def test_codes_held_for_one_store_are_handed_out_while_another_store_s_are_read(
     held, reading, read = ResidentCodes(), threading.Event(), threading.Event()
     one = CodesAt(Path("one.sqlite"), CollectionId(1), 1)
     other = CodesAt(Path("other.sqlite"), CollectionId(2), 1)
-    codes = coded(np.arange(2, dtype=np.int64), np.zeros((2, 8), np.uint8), 64)
+    codes = coded(np.arange(2, dtype=np.int64), packed(np.zeros((2, 8), np.uint8)), 64)
     assert held(one, lambda: codes) is codes
 
     def slow() -> Coded:
@@ -133,7 +134,7 @@ def test_codes_held_for_one_store_are_handed_out_while_another_store_s_are_read(
 def test_a_search_waiting_on_a_store_s_codes_takes_those_just_read() -> None:
     held, reading, read = ResidentCodes(), threading.Event(), threading.Event()
     at = CodesAt(Path("one.sqlite"), CollectionId(1), 1)
-    codes = coded(np.arange(2, dtype=np.int64), np.zeros((2, 8), np.uint8), 64)
+    codes = coded(np.arange(2, dtype=np.int64), packed(np.zeros((2, 8), np.uint8)), 64)
     reads: list[int] = []
 
     def slow() -> Coded:

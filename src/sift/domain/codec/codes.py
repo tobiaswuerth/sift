@@ -1,9 +1,12 @@
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
 
-from sift.domain.arrays import read_only
+from sift import _native
+from sift.domain.arrays import Ids, read_only
 
 type Floats = NDArray[np.float32]
 type Halves = NDArray[np.float16]
@@ -13,7 +16,6 @@ type Distances = NDArray[np.uint16]
 
 WORD_BYTES = 8
 MOST_BITS = int(np.iinfo(np.uint16).max)
-SCANNED = 768 << 10
 BYTE_BITS = read_only(np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).astype(np.float32))
 
 
@@ -39,16 +41,46 @@ def code_of(query: Floats) -> Words:
     return words(codes(query.reshape(1, -1))).reshape(-1)
 
 
-def distances(held: Words, query: Words, scanned: int = SCANNED) -> Distances:
-    found = np.empty(len(held), np.uint16)
-    step = min(len(held), max(1, scanned // (WORD_BYTES * max(1, len(query)))))
-    differing = np.empty((step, width_of(held)), np.uint64)
-    ones = np.empty((step, width_of(held)), np.uint8)
-    for start in range(0, len(held), max(1, step)):
-        part = held[start : start + step]
-        counted = np.bitwise_count(np.bitwise_xor(part, query, out=differing[: len(part)]), out=ones[: len(part)])
-        found[start : start + step] = counted.sum(axis=1, dtype=np.uint16)
-    return found
+@dataclass(frozen=True, slots=True, eq=False)
+class CodesFilling:
+    native: _native.Filling
+    rows: int
+    size: int
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class HeldCodes:
+    native: _native.Codes
+    rows: int
+    size: int
+
+
+def filling(rows: int, size: int) -> CodesFilling:
+    return CodesFilling(_native.Filling(rows, size), rows, size)
+
+
+def filled(made: CodesFilling, more: bytes) -> None:
+    made.native.extend(more)
+
+
+def finished(made: CodesFilling) -> HeldCodes:
+    return HeldCodes(_native.Codes(made.native), made.rows, made.size)
+
+
+def packed(bits: Bits) -> HeldCodes:
+    made = filling(len(bits), width_of(bits))
+    filled(made, np.ascontiguousarray(bits).tobytes())
+    return finished(made)
+
+
+def measured(held: Sequence[HeldCodes], query: Words) -> tuple[Distances, Ids]:
+    found, counted = _native.scanned_codes([each.native for each in held], np.ascontiguousarray(query).tobytes())
+    return np.frombuffer(found, np.uint16), np.asarray(counted, np.int64)
+
+
+def rows_of(held: HeldCodes, at: Ids) -> Bits:
+    found = held.native.picked(np.ascontiguousarray(at, np.int64))
+    return np.frombuffer(found, np.uint8).reshape(len(at), held.size)
 
 
 def bit_scores(bits: Bits, query: Floats) -> Floats:

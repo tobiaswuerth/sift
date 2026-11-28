@@ -19,6 +19,7 @@ LAYERS = (
     "merge",
     "phrases",
     "unions",
+    "hamming",
     "clusters",
     "python",
 )

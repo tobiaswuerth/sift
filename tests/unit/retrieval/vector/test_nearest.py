@@ -1,9 +1,5 @@
-import cProfile
-import pstats
 import threading
 import tracemalloc
-from collections.abc import Callable, Sequence
-from typing import cast
 
 import numpy as np
 import pytest
@@ -13,16 +9,14 @@ from numpy.typing import NDArray
 
 from sift.api.ids import ChunkId
 from sift.domain.arrays import Ids, floats, ints
-from sift.domain.codec.codes import Bits, Floats, Halves, codes
+from sift.domain.codec.codes import Floats, Halves, codes, packed, rows_of
 from sift.retrieval.vector.nearest import (
     SCAN_SHARE,
-    SCANNING,
     SHORTLIST,
     Coded,
     ExactRead,
     Near,
     Reads,
-    ScanPart,
     coded,
     nearest,
 )
@@ -48,9 +42,13 @@ def stores(seed: int, sizes: list[int], width: int) -> tuple[list[Coded], list[t
         ids = first + np.arange(size, dtype=np.int64) * 3
         first += 10_000
         halves = matrix.astype(np.float16)
-        held.append(coded(ids, codes(halves.astype(np.float32)), width))
+        held.append(coded(ids, packed(codes(halves.astype(np.float32))), width))
         exact.append((ids, halves))
     return held, exact
+
+
+def masked(held: Coded, mask: NDArray[np.bool_]) -> Coded:
+    return coded(held.ids[mask], packed(rows_of(held.codes, np.flatnonzero(mask))), held.width)
 
 
 def brute(exact: list[tuple[Ids, Halves]], query: Floats, k: int) -> list[Near]:
@@ -83,7 +81,7 @@ def test_vectors_at_one_distance_are_found_smallest_id_first_however_few_are_res
     row = unit(np.arange(1, 25, dtype=np.float64))
     rows = np.tile(row, (100, 1)).astype(np.float16)
     exact = [(first + np.arange(0, 300, 3, dtype=np.int64), rows) for first in (10_000, 0)]
-    held = [coded(ids, codes(halves.astype(np.float32)), 24) for ids, halves in exact]
+    held = [coded(ids, packed(codes(halves.astype(np.float32))), 24) for ids, halves in exact]
     found = nearest(held, row, 7, Reads(reader(exact)), rescore=rescore)
     assert [near.chunk for near in found] == list(range(0, 21, 3))
 
@@ -145,43 +143,6 @@ def test_a_scan_without_a_filter_holds_a_few_bytes_a_code_beside_the_codes_howev
     assert peak < BYTES_A_CODE * 200_000
 
 
-def test_a_scan_of_many_codes_is_spread_over_threads_part_by_part_and_finds_what_one_thread_finds() -> None:
-    sizes = [150_000, 40_000, 10, 0]
-    held, exact = stores(21, sizes, 64)
-    query = unit(np.random.default_rng(22).normal(size=64))
-    asked: list[ScanPart] = []
-
-    def one_after_another(scan: Callable[[ScanPart], None], parts: Sequence[ScanPart]) -> None:
-        asked.extend(parts)
-        for part in parts:
-            scan(part)
-
-    alone = nearest(held, query, 10, Reads(reader(exact), spread=one_after_another), rescore=50)
-    assert nearest(held, query, 10, Reads(reader(exact)), rescore=50) == alone
-    assert len(alone) == 10
-    assert [sum(len(part.rows) for part in asked if part.store == store) for store in range(4)] == sizes
-    assert sorted(part.at for part in asked) == sorted(sum(sizes[: part.store]) + part.rows.start for part in asked)
-    assert (len([part for part in asked if part.store == 0]) > 1, len(asked) <= SCANNING + len(sizes)) == (True, True)
-    assert [part.number for part in asked] == list(range(len(asked)))
-
-
-def test_the_distances_are_counted_where_they_are_scanned_and_not_once_more_to_choose_the_nearest() -> None:
-    held, exact = stores(25, [150_000, 40_000], 64)
-    query = unit(np.random.default_rng(26).normal(size=64))
-    parts: list[ScanPart] = []
-
-    def one_after_another(scan: Callable[[ScanPart], None], asked: Sequence[ScanPart]) -> None:
-        parts.extend(asked)
-        for part in asked:
-            scan(part)
-
-    profile = cProfile.Profile()
-    profile.runcall(nearest, held, query, 10, Reads(reader(exact), spread=one_after_another), rescore=50)
-    counted = pstats.Stats(profile).get_stats_profile().func_profiles
-    counts = [int(each.ncalls.split("/")[0]) for name, each in counted.items() if "bincount" in name]
-    assert (len(parts) > 2, counts) == (True, [len(parts)])
-
-
 def test_a_scan_of_few_codes_starts_no_thread() -> None:
     held, exact = stores(23, [500, 300], 64)
     query = unit(np.random.default_rng(24).normal(size=64))
@@ -205,7 +166,7 @@ def exact_stores(seed: int, sizes: list[int], width: int) -> tuple[list[Coded], 
         copies = rng.integers(0, max(size, 1), size=size // 4)
         halves[: len(copies)] = halves[copies]
         ids = at * 10_000 + np.arange(size, dtype=np.int64) * 3
-        held.append(coded(ids, codes(halves.astype(np.float32)), width))
+        held.append(coded(ids, packed(codes(halves.astype(np.float32))), width))
         exact.append((ids, halves))
     return held, exact
 
@@ -248,7 +209,7 @@ def test_the_nearest_are_those_by_codes_then_by_bits_then_exactly_with_ties_by_i
 
 def test_a_store_without_codes_is_passed_over_and_not_read() -> None:
     held, exact = exact_stores(3, [80], 24)
-    empty = coded(np.zeros(0, np.int64), np.zeros((0, 0), np.uint8), 0)
+    empty = coded(np.zeros(0, np.int64), packed(np.zeros((0, 0), np.uint8)), 0)
     read: list[int] = []
 
     def recorded(store: int, chunks: Ids) -> tuple[Ids, Halves]:
@@ -281,28 +242,26 @@ def test_codes_alike_are_shortlisted_by_id() -> None:
     ids = np.arange(50, dtype=np.int64) * 2
     exact = [(ids, halves)]
     query = (rng.integers(1, 65, size=24) / 64).astype(np.float32)
-    found = nearest([coded(ids, codes(halves.astype(np.float32)), 24)], query, 3, Reads(reader(exact)), rescore=1)
+    found = nearest(
+        [coded(ids, packed(codes(halves.astype(np.float32))), 24)], query, 3, Reads(reader(exact)), rescore=1
+    )
     assert list(found) == staged(exact, query, 3, 1)
     assert {near.chunk for near in found} <= set(ints(ids[:3]))
 
 
 def test_codes_not_of_their_width_are_refused() -> None:
     with pytest.raises(ValueError, match="codes of 64 dimensions are 8 bytes each"):
-        coded(np.arange(2, dtype=np.int64), codes(np.ones((2, 128), np.float32)), 64)
+        coded(np.arange(2, dtype=np.int64), packed(codes(np.ones((2, 128), np.float32))), 64)
     with pytest.raises(ValueError, match="a row a chunk"):
-        coded(np.arange(3, dtype=np.int64), codes(np.ones((2, 64), np.float32)), 64)
-    with pytest.raises(ValueError, match="uint8 matrix"):
-        coded(np.arange(2, dtype=np.int64), cast("Bits", codes(np.ones((2, 64), np.float32)).astype(np.int8)), 64)
+        coded(np.arange(3, dtype=np.int64), packed(codes(np.ones((2, 64), np.float32))), 64)
     with pytest.raises(ValueError, match="codes of 65,536 dimensions"):
-        coded(np.arange(1, dtype=np.int64), np.zeros((1, 8_192), np.uint8), 65_536)
-    with pytest.raises(ValueError, match="uint8 matrix"):
-        coded(np.arange(8, dtype=np.int64), np.zeros(8, np.uint8), 64)
+        coded(np.arange(1, dtype=np.int64), packed(np.zeros((1, 8_192), np.uint8)), 65_536)
     with pytest.raises(ValueError, match="codes of 0 dimensions"):
-        coded(np.arange(2, dtype=np.int64), np.zeros((2, 0), np.uint8), 0)
+        coded(np.arange(2, dtype=np.int64), packed(np.zeros((2, 0), np.uint8)), 0)
 
 
 def test_a_store_without_codes_may_be_of_any_width() -> None:
-    assert len(coded(np.zeros(0, np.int64), np.zeros((0, 0), np.uint8), 24).ids) == 0
+    assert len(coded(np.zeros(0, np.int64), packed(np.zeros((0, 0), np.uint8)), 24).ids) == 0
 
 
 def test_none_asked_for_reads_nothing() -> None:
@@ -325,7 +284,7 @@ def test_only_codes_allowed_are_found_checking_the_nearest_or_listing_all_for_a_
     query = unit(rng.normal(size=256))
     found = nearest(held, query, 10, Reads(reader(exact), chosen), rescore=200)
     kept = [(ids[mask], rows[mask]) for (ids, rows), mask in zip(exact, masks, strict=True)]
-    alone = [coded(each.ids[mask], each.bits[mask], 256) for each, mask in zip(held, masks, strict=True)]
+    alone = [masked(each, mask) for each, mask in zip(held, masks, strict=True)]
     assert found == nearest(alone, query, 10, Reads(reader(kept)), rescore=200)
     if share > SCAN_SHARE:
         assert not any(each.listings for each in chosen)
@@ -342,7 +301,7 @@ def test_a_store_without_a_filter_beside_one_with_it_keeps_every_code() -> None:
     query = unit(rng.normal(size=256))
     found = nearest(held, query, 10, Reads(reader(exact), [None, chosen]), rescore=10)
     kept = [exact[0], (exact[1][0][mask], exact[1][1][mask])]
-    alone = [held[0], coded(held[1].ids[mask], held[1].bits[mask], 256)]
+    alone = [held[0], masked(held[1], mask)]
     assert found == nearest(alone, query, 10, Reads(reader(kept)), rescore=10)
     assert (chosen.listings, len(chosen.asked) > 0) == ([], True)
     few = Chosen(exact[1][0][:5])

@@ -17,6 +17,7 @@ from sift.app.collections import searchable
 from sift.app.linked import LeftOut, Narrowing, condition_in, narrowing
 from sift.app.loading import unreported
 from sift.app.resident import CodesAt, CodeSource, DecodedSource, KeywordsAt, decoded_each_search, read_each_time
+from sift.domain.codec.codes import packed
 from sift.domain.query import fields as shown
 from sift.domain.query.expressions import Expression
 from sift.retrieval.keyword import lists
@@ -31,7 +32,7 @@ from sift.storage.passing import Passing
 from sift.storage.store import read_connected
 from sift.storage.unusable import unavailable_if_unusable
 from sift.storage.vector_meta import left, model_of, width_held
-from sift.storage.vectors import EMBED_REMEDY, codes_of, refuse_recipe, vector_generation
+from sift.storage.vectors import EMBED_REMEDY, refuse_recipe, resident_codes_of, vector_generation
 
 UNEMBEDDED_REMEDY = "embed the collection"
 EMPTY_QUERY = "an empty query finds nothing"
@@ -192,12 +193,12 @@ def narrowed(home: Path, request: Options, audience: Audience, left_out: LeftOut
 
 
 def no_vectors() -> Vectors:
-    return Vectors(coded(np.zeros(0, np.int64), np.zeros((0, 0), np.uint8), 0))
+    return Vectors(coded(np.zeros(0, np.int64), packed(np.zeros((0, 0), np.uint8)), 0))
 
 
 def _coded(transaction: Reading) -> Coded:
-    ids, bits = codes_of(transaction)
-    return coded(ids, bits, width_held(transaction) or 0)
+    ids, held = resident_codes_of(transaction)
+    return coded(ids, held, width_held(transaction) or 0)
 
 
 def embedded_by(model: str, one: Collection, transaction: Reading, codes: CodeSource) -> Vectors | None:

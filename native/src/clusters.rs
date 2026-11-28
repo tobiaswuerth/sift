@@ -1,5 +1,7 @@
 use rayon::prelude::*;
 
+use crate::hamming::apart;
+
 const BITS: usize = 64;
 const ROWS_A_TASK: usize = 1 << 12;
 const UNEVEN: &str = "a clustering takes codes and centroids of whole words, and at least one centroid";
@@ -14,17 +16,10 @@ fn even(held: &[u64], centroids: &[u64], width: usize) -> Result<(), String> {
     }
 }
 
-fn apart(code: &[u64], centroid: &[u64]) -> u32 {
-    code.iter()
-        .zip(centroid)
-        .map(|(one, other)| (one ^ other).count_ones())
-        .sum()
-}
-
 fn nearest_of(code: &[u64], centroids: &[u64], width: usize) -> i64 {
     let mut best = (u32::MAX, 0i64);
     for (centroid, at) in centroids.chunks_exact(width).zip(0i64..) {
-        let found = apart(code, centroid);
+        let found = apart(code.iter().copied(), centroid);
         if found < best.0 {
             best = (found, at);
         }

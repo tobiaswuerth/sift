@@ -176,6 +176,8 @@ Generated from the code by `python -m tools limits --write`; a test checks that 
 | `sift.storage.keywords` | `MOST_ROW` | `(1 << 63) - 1` |
 | `sift.storage.writer` | `MOMENT_SECONDS` | `0.5` |
 | `sift.storage.writer` | `ASK_AGAIN_SECONDS` | `0.05` |
+| `native::hamming` | `WORD_BYTES` | `8` |
+| `native::hamming` | `DISTANCE_BYTES` | `2` |
 | `native::lists` | `MOST_POSITION` | `1 << 32` |
 | `native::lists` | `MOST_BLOCK` | `1 << 12` |
 | `native::lists` | `MOST_TIMES` | `1024` |
