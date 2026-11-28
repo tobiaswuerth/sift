@@ -86,6 +86,13 @@ def test_a_worker_says_where_it_is_reached_and_shows_its_key_where_secrets_may_b
     assert screen == tuple(line.format(key="t0ken.p1n") for line in lines)
 
 
+def test_with_colour_a_worker_paints_where_its_address_is_set_rather_than_writing_out_the_paint() -> None:
+    lent = Lending("work\x1bstation", 8766, "t0ken.p1n")
+    remote = shown(View(), lent, 0.0, Looks(Style(colour=True), "linux"))[1][1]
+    elsewhere = "\x1b[2mon the machines that send it work\x1b[0m"
+    assert remote == f"  set  SIFT_EMBED_REMOTE=https://<key>@work\\x1bstation:8766  {elsewhere}"
+
+
 def test_with_colour_labels_and_secondary_parts_are_painted() -> None:
     lines = replayed(RUN, Looks(Style(colour=True), "linux"))[1]
     assert lines[0] == "\x1b[1mnotes\x1b[0m  \x1b[2m/data/notes\x1b[0m"

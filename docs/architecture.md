@@ -51,7 +51,7 @@ diacritics removed, reproduced exactly as a table of every code point's separato
   stops once it is spent and has found anything, returning the best so far marked `partial`.
 - Over several collections, terms are weighted by the counts of all of them, as one index would.
 
-## Vectors and `vsearch`
+## Vectors and semantic search
 
 - The embedding model runs on the GPU (NVIDIA, else Apple) or the CPU, in batches of texts of similar length, in
   bfloat16 where the GPU has it and float32 elsewhere; vectors are stored as fp16. The default models load at a commit
@@ -71,16 +71,17 @@ diacritics removed, reproduced exactly as a table of every code point's separato
 - A filter on front matter is checked for the nearest candidates first, a batch at a time, until enough pass; one that
   lets few through is listed instead.
 
-## `query`, `similar` and results
+## Hybrid search, similar documents and results
 
-- **`query`:** the best 40 keyword and 40 semantic candidates (or `k`, if more) are reranked together by a
-  cross-encoder, which reads each candidate's title, the front-matter values sharing a word with the query (an author,
-  an id), and the passage.
+- **Hybrid search** (`sift query`, and the MCP tool `search` in its default mode): the best 40 keyword and 40
+  semantic candidates (or `k`, if more) are reranked together by a cross-encoder, which reads each candidate's title,
+  the front-matter values sharing a word with the query (an author, an id), and the passage.
 - **The blend:** a candidate's score is the reranker's plus half its cosine with the query, scaled to the reranker's
   spread over the candidates, so one weight fits any reranker. Candidates whose front matter the query names get the
   best cosine, since the embedding never sees front matter. A reranker alone ranks scientific text worse than the
-  embedding ([why](benchmarks.md#why-query-blends-in-the-cosine)).
-- **`similar`:** the mean of a document's passage vectors, scored as `vsearch` scores a query. No model runs.
+  embedding ([why](benchmarks.md#why-hybrid-search-blends-in-the-cosine)).
+- **Similar documents** (`sift similar`, and the MCP tool `related`): the mean of a document's passage vectors,
+  scored as semantic search scores a query. No model runs.
 - **Results:** each document once, by its best passage. Documents sharing a DOI are one hit, the best ranked, naming
   the others under `also`. Adaptive k keeps the hits before the largest drop in score among the first 90% of the
   gaps, and five more ([Taguchi et al. 2025](https://arxiv.org/abs/2506.08479)).

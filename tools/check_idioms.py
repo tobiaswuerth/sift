@@ -8,7 +8,7 @@ from typing import TypeGuard
 
 from tools.canonical import canonical
 from tools.findings import PYTHON_ROOTS, ROOT, Finding, found, report
-from tools.idioms_python import generics_called, tls_without_a_floor
+from tools.idioms_python import generics_called, painted_escaped, tls_without_a_floor
 from tools.idioms_storage import storage_idioms
 
 CORE = ("src/sift/api/", "src/sift/domain/")
@@ -363,6 +363,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(() if in_tests else banned_methods(path, tree)),
         *(() if in_tests else unicode_digits(path, tree)),
         *(() if in_tests else recursion_caught(path, tree)),
+        *(() if in_tests else painted_escaped(path, tree)),
         *(io_in_the_core(path, tree) if path.startswith(CORE) else ()),
         *(exits_outside_interfaces(path, tree) if outside_interfaces else ()),
         *(flags_outside_interfaces(path, tree) if outside_interfaces else ()),

@@ -42,9 +42,9 @@ source, which needs [rustup](https://rustup.rs) (it installs the pinned Rust 1.1
 downloads two models from Hugging Face (about 2 GB), each pinned to a commit, so that later changes to a model's
 repository never change your vectors. The first scanned PDF read on a GPU downloads a third model, for OCR.
 
-sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, where `query` takes about 20 seconds
-per question instead of about one. PyTorch from PyPI uses the GPU on Linux and macOS. On Windows, `--torch-backend auto`
-installs the CUDA build for your driver; with pip, install PyTorch's CUDA build as
+sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, where a hybrid search takes about
+20 seconds per question instead of about one. PyTorch from PyPI uses the GPU on Linux and macOS. On Windows,
+`--torch-backend auto` installs the CUDA build for your driver; with pip, install PyTorch's CUDA build as
 [pytorch.org](https://pytorch.org/get-started/locally/) shows for your system. If an NVIDIA GPU sits unused, sift says
 so and prints the fix, `uv tool install --reinstall --torch-backend auto sift-rag`. A machine without a GPU can
 [use another machine's](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md).
@@ -55,7 +55,7 @@ so and prints the fix, `uv tool install --reinstall --torch-backend auto sift-ra
 sift add ~/handbook --name handbook    # add a folder as a collection
 sift index                             # read its files into the collection's store
 sift embed                             # embed every passage that has no vector yet
-sift query "who approves travel expenses abroad"
+sift query "who approves travel expenses abroad"   # hybrid search: keywords and meaning, reranked
 sift serve                             # MCP on http://127.0.0.1:8765/mcp, and the UI under /ui
 ```
 
@@ -84,7 +84,7 @@ can't reach your computer.
 
 | Tool | Purpose |
 |---|---|
-| `search` | Hybrid search for RAG (keyword and semantic candidates, reranked by a cross-encoder), or keyword search ranked by BM25 (`"phrases"`, `prefix*`, `AND`, `OR`, `NOT`, parentheses), or semantic search |
+| `search` | By `mode`: `hybrid`, the default, for RAG (keyword and semantic candidates, reranked by a cross-encoder); `keyword`, ranked by BM25 (`"phrases"`, `prefix*`, `AND`, `OR`, `NOT`, parentheses); or `semantic`, by meaning |
 | `get` | Documents by id, whole or some of their lines, with front-matter `fields` |
 | `related` | Documents alike in meaning to one, a note's links and backlinks, or the documents naming it without a link |
 | `collections` | The collections: folders, counts, front-matter fields, links, and the jobs that run |
@@ -107,8 +107,8 @@ fields exist.
 | `sift add FOLDER [--name NAME]` | Add a folder as a collection (`--store PATH` puts its store elsewhere, `--follow-links` reads files linked from outside it, `--title-from name` titles notes by file name) |
 | `sift index [NAME ...] [--file PATH]` | Read new and changed files, of every active collection or those named; `--file`, repeated: only these |
 | `sift embed [NAME ...]`, `sift embed --reset` | Embed every passage without a vector; `--reset`: every passage of every collection again |
-| `sift search`, `vsearch`, `query` `TEXT` | Keyword, semantic and hybrid search |
-| `sift similar ID` | Documents near one in meaning |
+| `sift search`, `vsearch`, `query` `TEXT` | Keyword, semantic and hybrid search: the modes of the MCP tool `search` |
+| `sift similar ID` | Documents near one in meaning, as the MCP tool `related` finds them |
 | `sift get ID [ID ...] [--lines 14-23] [--fields a,b]` | Documents, or some of their lines |
 | `sift links`, `unresolved`, `mentions` | Linked notes |
 | `sift status [NAME ...] [--unreadable]` | Each collection's folder and what its store holds, as a table |
@@ -159,19 +159,21 @@ Over 45.7 million passages in seven collections (PubMed, OpenAlex, arXiv and bio
 federal law and notes), each question asked for the first time, through `sift serve` with its models loaded, on a
 desktop workstation shared with another workload (median of 8 questions each):
 
-| Use case | Mode | Time |
+| Use case | MCP tool and mode (command) | Time |
 |---|---|---|
-| A name, an id, a term | `search` | 0.16 s |
-| A question, by its keywords | `search` | 0.6 s |
-| By meaning | `vsearch` | 0.8 s |
-| A question for RAG, reranked on the GPU | `query` | 1.1 s |
-| Documents like one | `similar` | 0.6 s |
+| A name, an id, a term | `search`, keyword (`sift search`) | 0.16 s |
+| A question, by its keywords | `search`, keyword (`sift search`) | 0.6 s |
+| By meaning | `search`, semantic (`sift vsearch`) | 0.8 s |
+| A question for RAG, reranked on the GPU | `search`, hybrid (`sift query`) | 1.1 s |
+| Documents like one | `related` (`sift similar`) | 0.6 s |
 
-Asked again, with what they read in memory, each takes a fifth to three fifths as long. The first semantic search of
-`sift serve` loads the models and the vectors' codes, which it then keeps in memory: for those 45.7 million passages,
-104 seconds from a cold disk. `sift embed` embeds 1,180 abstracts a second on that GPU, after compiling the model for 20
-seconds; `sift index` puts 3.3 million passages of arXiv in their topical order in two minutes. Every figure and how it
-was measured: [benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md).
+Asked again, with what they read in memory, each takes a fifth to three fifths as long. A hybrid search runs a
+keyword and a semantic search and reranks their best 80 candidates with a cross-encoder on the GPU, which is why it
+takes longest. Once per start, the first semantic or hybrid search of `sift serve` loads the models and the vectors'
+codes, which it then keeps in memory: for those 45.7 million passages, 104 seconds from a cold disk. `sift embed`
+embeds 1,180 abstracts a second on that GPU, after compiling the model for 20 seconds; `sift index` puts 3.3 million
+passages of arXiv in their topical order in two minutes. Every figure and how it was measured:
+[benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md).
 
 ## Updating
 
