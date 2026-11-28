@@ -339,7 +339,7 @@ def test_a_store_that_may_only_be_read_is_read_and_left_as_it_was_unless_it_is_o
             assert first(transaction, Value, "PRAGMA user_version") == Value(len(LAYOUT))
         assert path.read_bytes() == before
         later = (*LAYOUT, Migration(("CREATE TABLE added(x INTEGER) STRICT",)))
-        with pytest.raises(StoreUnavailableError, match="cannot be written"), read_store(path, COLLECTION, later):
+        with pytest.raises(StoreUnavailableError, match="is marked read-only"), read_store(path, COLLECTION, later):
             pass
     finally:
         path.chmod(stat.S_IREAD | stat.S_IWRITE)

@@ -308,7 +308,7 @@ def test_a_store_that_cannot_be_written_is_passed_over_and_the_next_collection_i
         store.chmod(stat.S_IREAD | stat.S_IWRITE)
     assert isinstance(found["more"], Indexed)
     assert isinstance(found["notes"], Skipped)
-    assert found["notes"].message.startswith(f"the store {store.resolve()} cannot be written")
+    assert found["notes"].message.startswith(f"the store {store.resolve()} is marked read-only")
 
 
 @pytest.mark.usefixtures("notes")

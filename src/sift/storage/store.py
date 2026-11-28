@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from collections.abc import Callable, Generator, Sequence
 from contextlib import closing, contextmanager
@@ -41,6 +42,8 @@ LEFT_BY_ADD = """SELECT (SELECT value FROM meta WHERE key = 'collection') = ?
 SCHEMA_HELD = "SELECT count(*) FROM sqlite_schema"
 COLLECTION_HELD = "SELECT value FROM meta WHERE key = 'collection'"
 COUNTED = "SELECT count(*) FROM counts"
+READ_ONLY = "the store {path} is marked read-only"
+READ_ONLY_REMEDY = "remove its read-only mark, then run sift again"
 
 
 def _probed(path: Path, sql: str, parameters: tuple[str, ...] = ()) -> tuple[object, ...] | None:
@@ -114,7 +117,13 @@ def _verified(transaction: Reading, path: Path, collection: CollectionId, layout
     return found
 
 
+def refuse_read_only(path: Path) -> None:
+    if path.is_file() and not os.access(path, os.W_OK):
+        raise StoreUnavailableError(READ_ONLY.format(path=path), READ_ONLY_REMEDY)
+
+
 def _writable(path: Path) -> sqlite3.Connection:
+    refuse_read_only(path)
     return connect(path, create=False)
 
 

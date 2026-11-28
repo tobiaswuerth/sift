@@ -48,7 +48,7 @@ from sift.storage.catalog import (
 from sift.storage.database import reading
 from sift.storage.documents import counts, fields_sampled, unreadable
 from sift.storage.links import links_held
-from sift.storage.store import connected, read_store
+from sift.storage.store import connected, read_store, refuse_read_only
 from sift.storage.store_files import store_files_left, stored_bytes, unlinked
 from sift.storage.vector_meta import left, model_of
 from sift.storage.writer import sole_writer
@@ -121,6 +121,7 @@ def _held(one: Collection) -> tuple[int | None, Notice | None]:
 def remove(home: Path, request: RemoveCollection, unlink: Callable[[Path], None] = unlinked) -> CollectionRemoved:
     with field_at_fault("name"):
         one = named(known_collections(home), request.name)
+    refuse_read_only(one.store)
     with sole_writer(one.store, "a removal") if one.store.parent.is_dir() else nullcontext():
         documents, problem = _held(one)
         forget_collection(home, one.id)

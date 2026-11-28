@@ -1,3 +1,6 @@
+import contextlib
+import stat
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -12,7 +15,7 @@ from sift.api.collections import (
 )
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
-from sift.api.indexing import IndexCollections
+from sift.api.indexing import IndexCollections, Skipped
 from sift.api.links import ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
 from sift.app.collections import activate, add, deactivate, remove
@@ -24,6 +27,7 @@ from sift.app.query import query
 from sift.app.search import search
 from sift.app.vsearch import vsearch
 from sift.storage.catalog import known_collections
+from sift.storage.store import READ_ONLY_REMEDY
 from sift.storage.writer import sole_writer
 from tests.files import write
 from tests.homes import asked, home_of, indexed, quiet
@@ -184,3 +188,24 @@ def test_an_inactive_collection_is_left_out_of_index_and_embed_unless_named(home
     assert [each.name for each in index(home, IndexCollections(("diary",)), quiet).collections] == ["diary"]
     activate(home, ActivateCollections(("diary",)))
     assert "diary/wednesday.md" in found(home, "works")
+
+
+@contextlib.contextmanager
+def read_only_file(path: Path) -> Generator[None]:
+    path.chmod(stat.S_IREAD)
+    try:
+        yield
+    finally:
+        path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_a_collection_whose_store_is_read_only_is_kept_whole_saying_why(home: Path) -> None:
+    (diary,) = [one for one in known_collections(home) if one.name == "diary"]
+    with read_only_file(diary.store):
+        with pytest.raises(StoreUnavailableError, match="is marked read-only") as refused:
+            remove(home, RemoveCollection("diary"))
+        (embedded,) = embed(home, EmbedCollections(("diary",)), quiet, Hashed()).collections
+    assert refused.value.remedy == READ_ONLY_REMEDY
+    assert isinstance(embedded.outcome, Skipped)
+    assert (embedded.outcome.remedy, "is marked read-only" in embedded.outcome.message) == (READ_ONLY_REMEDY, True)
+    assert ([one.name for one in known_collections(home)], diary.store.is_file()) == (["diary", "notes"], True)
