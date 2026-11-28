@@ -142,12 +142,16 @@ def _finite(text: str) -> float:
     return number
 
 
-def _asked_id(body: bytes) -> Json:
+def _message(body: bytes) -> dict[str, object] | None:
     try:
         read = cast("object", json.loads(body, parse_float=_finite))
     except ValueError:
         return None
-    return cast("Json", cast("dict[str, object]", read).get("id")) if isinstance(read, dict) else None
+    return cast("dict[str, object]", read) if isinstance(read, dict) else None
+
+
+def _asked_id(body: bytes) -> Json:
+    return cast("Json", (_message(body) or {}).get("id"))
 
 
 def _failed(body: bytes, message: str) -> bytes | None:
@@ -177,14 +181,10 @@ def _relayed(home: _Home, body: bytes) -> bytes | None:
 
 
 def _owned(body: bytes, answer: bytes) -> bytes:
-    at = _asked_id(body)
-    try:
-        read = cast("object", json.loads(answer))
-    except ValueError:
+    at, read = _asked_id(body), _message(answer)
+    if at is None or read is None or read.get("id") is not None:
         return answer
-    if at is None or not isinstance(read, dict) or cast("dict[str, object]", read).get("id") is not None:
-        return answer
-    return json.dumps({**cast("dict[str, object]", read), "id": at}).encode()
+    return json.dumps({**read, "id": at}).encode()
 
 
 def _answered(home: _Home, body: bytes) -> bytes | None:

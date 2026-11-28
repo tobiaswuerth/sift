@@ -157,7 +157,8 @@ def test_a_home_process_that_does_not_start_is_said_to_each_message_waiting(sett
 def test_a_message_whose_id_is_written_in_escapes_gets_its_refusal_too(settings: Settings) -> None:
     out = io.BytesIO()
     escaped = b'{"jsonrpc": "2.0", "\\u0069d": 9, "method": "tools/list"}\n'
-    proxied(settings, quiet, Pipes(lines(escaped), out), Starting(lambda _settings, _idle: None, patience=0.05))
+    past = b'{"jsonrpc": "2.0", "id": 1e400, "method": "tools/list"}\n'
+    proxied(settings, quiet, Pipes(lines(escaped, past), out), Starting(lambda _settings, _idle: None, patience=0.05))
     assert list(answers(out)) == [9]
 
 

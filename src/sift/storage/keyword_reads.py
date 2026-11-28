@@ -3,7 +3,7 @@ import json
 import threading
 from collections import deque
 from collections.abc import Callable, Generator, Iterator, Sequence
-from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager, ExitStack, closing, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -100,8 +100,6 @@ class _Connections:
 
     def taken(self) -> Connection:
         with self.lock:
-            if self.left:
-                raise CancelledError
             return self.idle.pop()
 
     def given_back(self, connection: Connection) -> None:
@@ -118,7 +116,6 @@ class _Connections:
                 connection.interrupt()
             for connection in self.idle:
                 connection.close()
-            self.idle.clear()
 
 
 def _opened(path: Path, readers: int) -> _Connections:

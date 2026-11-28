@@ -91,9 +91,9 @@ the [README](README.md#updating) says; until a collection is added there, any co
 ### Security
 
 - Your commands send the home process a token, kept with its port in your own folder (`%LOCALAPPDATA%\sift` on
-  Windows, `~/.local/state/sift` elsewhere), readable by you alone, never in the home: it grants the whole command
-  line. MCP and the UI take none, answer only requests addressed to `127.0.0.1` or `localhost`, and MCP refuses what
-  web pages of other sites send; no other site can show the UI's pages or files in a frame, load them, or make the
-  UI search in the background ([security](docs/SECURITY.md)).
+  Windows, `$XDG_STATE_HOME/sift` or `~/.local/state/sift` elsewhere), readable by you alone, never in the home: it
+  grants the whole command line. MCP and the UI take none, answer only requests addressed to `127.0.0.1` or
+  `localhost`, and MCP refuses what web pages of other sites send; no other site can show the UI's pages or files in
+  a frame, load them, or make the UI search in the background ([security](docs/SECURITY.md)).
 
 [Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.15.2...HEAD

@@ -61,18 +61,18 @@ def test_headers_as_mail_writes_them() -> None:
     subject = "Grüße from Zürich, and a line so long that a mail client folds it, as mail clients fold long lines"
     headers = {
         "Subject": subject,
-        "From": "Jürg Bühler <jb@example.ch>",
+        "From": "Jürg Bühler <jb@example.com>",
         "Date": "Tue, 14 Oct 2026 09:30:00 +0200",
-        "In-Reply-To": "<earlier@example.ch>",
+        "In-Reply-To": "<earlier@example.com>",
     }
     found = only(mail_bytes(message(headers=headers)), "a.eml")
     assert found.title == subject
     assert found.fields == {
-        "from": "jb@example.ch",
+        "from": "jb@example.com",
         "date": "2026-10-14T07:30:00+00:00",
-        "in_reply_to": "<earlier@example.ch>",
+        "in_reply_to": "<earlier@example.com>",
     }
-    assert "From: Jürg Bühler <jb@example.ch>" in found.text
+    assert "From: Jürg Bühler <jb@example.com>" in found.text
     bare = only(mail_bytes(message(body=None)), "Bare note.eml")
     assert (bare.title, bare.fields) == ("Bare note", {})
     assert only(b"Date: sometime soon\r\n\r\nPlain words.\r\n", "odd.eml").fields == {"date": "sometime soon"}

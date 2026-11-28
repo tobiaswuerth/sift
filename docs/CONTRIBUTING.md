@@ -123,6 +123,6 @@ failed jobs.
 Dependabot moves the packages, the crates, the actions and the hooks, each to a release a week old. It reads neither
 the manylinux images nor rustup's checksums in the wheels workflow: the weekly audit fails once a release of those a
 week old is newer than the one pinned, and names what to set (`python -m tools pins`). Nothing tells of newer
-releases of the rest, which are moved by hand: the Rust toolchain in `native/rust-toolchain.toml`, the uv of the
+releases of the rest, which are moved by hand: the Rust toolchain in `rust-toolchain.toml`, the uv of the
 workflows (setup-uv's `version`), pip-audit and cargo-audit in the audit workflow, and twine and cargo-llvm-cov in
 `noxfile.py` and the wheels workflow.
