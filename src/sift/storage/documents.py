@@ -22,6 +22,7 @@ from sift.storage.database import (
     run,
     run_each,
     run_rows,
+    touched,
 )
 from sift.storage.texts import put_text, put_texts
 
@@ -262,10 +263,17 @@ class Passage(NamedTuple):
 PASSAGES = """SELECT c.id, d.id, s.path, d.key, d.title, c.first_line, c.last_line, c.start, c.length
               FROM chunks c JOIN documents d ON d.id = c.document JOIN sources s ON s.id = d.source
               WHERE c.id IN (SELECT value FROM json_each(?))"""
+TOUCH_PASSAGES = """SELECT count(*)
+                    FROM chunks c JOIN documents d ON d.id = c.document JOIN sources s ON s.id = d.source
+                    WHERE c.id IN (SELECT value FROM json_each(?))"""
+FIELDS = "SELECT id, fields FROM documents WHERE id IN (SELECT value FROM json_each(?))"
+TOUCH_FIELDS = "SELECT sum(length(fields)) FROM documents WHERE id IN (SELECT value FROM json_each(?))"
 
 
 def passages(transaction: Reading, chunks: Sequence[ChunkId]) -> dict[ChunkId, Passage]:
-    return {found.chunk: found for found in rows(transaction, Passage, PASSAGES, (json.dumps(list(chunks)),))}
+    asked = list(chunks)
+    touched(transaction, TOUCH_PASSAGES, asked)
+    return {found.chunk: found for found in rows(transaction, Passage, PASSAGES, (json.dumps(asked),))}
 
 
 class FieldsRow(NamedTuple):
@@ -274,10 +282,9 @@ class FieldsRow(NamedTuple):
 
 
 def fields_by_document(transaction: Reading, documents: Sequence[int]) -> dict[int, Fields]:
-    sql = "SELECT id, fields FROM documents WHERE id IN (SELECT value FROM json_each(?))"
-    return {
-        found.id: fields_of(found.fields) for found in rows(transaction, FieldsRow, sql, (json.dumps(list(documents)),))
-    }
+    asked = list(documents)
+    touched(transaction, TOUCH_FIELDS, asked)
+    return {found.id: fields_of(found.fields) for found in rows(transaction, FieldsRow, FIELDS, (json.dumps(asked),))}
 
 
 class Unreadable(NamedTuple):

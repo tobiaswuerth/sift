@@ -5,13 +5,16 @@ from typing import NamedTuple, cast
 
 from sift.api.ids import DocumentId
 from sift.domain.errors import DamagedError
-from sift.storage.database import Reading, Value, Writing, first, rows, run_each, streamed
+from sift.storage.database import Reading, Value, Writing, first, rows, run_each, streamed, touched
 
 BLOCK = 1 << 16
 NEWLINE = "\n"
 BLOCKS = """SELECT t.document, t.block, t.text
             FROM json_each(?) j JOIN texts t
               ON t.document = json_extract(j.value, '$[0]') AND t.block = json_extract(j.value, '$[1]')"""
+TOUCH_BLOCKS = """SELECT sum(length(t.text))
+                  FROM json_each(?) j JOIN texts t
+                    ON t.document = json_extract(j.value, '$[0]') AND t.block = json_extract(j.value, '$[1]')"""
 BLOCKS_AT_ONCE = """SELECT json_group_array(json_array(t.document, t.block, t.text))
                     FROM json_each(?) j JOIN texts t
                       ON t.document = json_extract(j.value, '$[0]') AND t.block = json_extract(j.value, '$[1]')"""
@@ -100,6 +103,7 @@ def _cut(spans: Sequence[TextSpan], wanted: Sized, held: Mapping[tuple[int, int]
 
 def spans_text(transaction: Reading, spans: Sequence[TextSpan]) -> list[str]:
     wanted = _wanted(spans)
+    touched(transaction, TOUCH_BLOCKS, wanted)
     found = rows(transaction, _Block, BLOCKS, (json.dumps(wanted),))
     return _cut(spans, wanted, {(each.document, each.block): each.text for each in found})
 

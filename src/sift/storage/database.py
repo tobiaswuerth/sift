@@ -4,9 +4,9 @@ import sqlite3
 import stat
 from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePath
-from typing import NamedTuple, cast
+from typing import NamedTuple, Protocol, cast
 from urllib.parse import quote
 
 from sift.api.errors import Problem, StoreUnavailableError
@@ -39,9 +39,14 @@ type Connection = sqlite3.Connection
 PRIVATE_FOLDER, PRIVATE_FILE, SHARED = 0o700, 0o600, 0o077
 
 
+class Touches(Protocol):
+    def touched(self, sql: str, keys: Sequence[object]) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class Reading:
     connection: sqlite3.Connection
+    ahead: Touches | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,10 +177,15 @@ def abandon(transaction: Reading) -> None:
         transaction.connection.execute("ROLLBACK")
 
 
+def touched(transaction: Reading, sql: str, keys: Sequence[object]) -> None:
+    if transaction.ahead is not None:
+        transaction.ahead.touched(sql, keys)
+
+
 @contextmanager
-def reading(connection: sqlite3.Connection) -> Generator[Reading]:
+def reading(connection: sqlite3.Connection, ahead: Touches | None = None) -> Generator[Reading]:
     connection.execute("BEGIN")
-    held = Reading(connection)
+    held = Reading(connection, ahead=ahead)
     try:
         yield held
     except BaseException:

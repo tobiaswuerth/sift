@@ -1,6 +1,6 @@
 import time
 from collections.abc import Callable, Sequence
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
@@ -29,6 +29,7 @@ from sift.storage.database import Reading, abandon, reading
 from sift.storage.keyword_lists import keyword_generation
 from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
+from sift.storage.readers import Ahead
 from sift.storage.store import read_connected
 from sift.storage.unusable import unavailable_if_unusable
 from sift.storage.vector_meta import left, model_of, width_held
@@ -270,8 +271,9 @@ def _searching(one: Collection, asked: Narrowing, wants: Wants) -> Searching | N
     resources = ExitStack()
     with unavailable_if_unusable(one.store):
         try:
+            ahead = resources.enter_context(closing(Ahead(one.store)))
             connection = resources.enter_context(read_connected(one.store, one.id))
-            transaction = resources.enter_context(reading(connection))
+            transaction = resources.enter_context(reading(connection, ahead))
             found = condition_in(asked, one, transaction)
             if found is not None and found.lets_none:
                 resources.close()

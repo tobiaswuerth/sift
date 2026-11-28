@@ -22,7 +22,7 @@ from sift.domain.codec.codes import (
 )
 from sift.domain.errors import DamagedError
 from sift.domain.text.embedding import RECIPE
-from sift.storage.database import Count, IdRow, Reading, Writing, rows, run, run_each
+from sift.storage.database import Count, IdRow, Reading, Writing, rows, run, run_each, touched
 from sift.storage.texts import TextSpan, spans_text
 from sift.storage.vector_meta import MODEL_KEY, RECIPE_KEY, WIDTH_KEY, model_of, recipe_of, width_held
 
@@ -33,6 +33,8 @@ PENDING = """SELECT c.id, c.document, c.start, c.length,
              ORDER BY u.chunk LIMIT ?"""
 TITLES = "SELECT id, title FROM documents WHERE id IN (SELECT value FROM json_each(?))"
 CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
+VECTORS = "SELECT chunk, vector FROM vectors WHERE chunk IN (SELECT value FROM json_each(?)) ORDER BY chunk"
+TOUCH_VECTORS = "SELECT sum(length(vector)) FROM vectors WHERE chunk IN (SELECT value FROM json_each(?))"
 READ = 65_536
 MATRIX = 2
 EMBED_REMEDY = "embed again with reset, to embed every collection with {model}"
@@ -216,12 +218,9 @@ def resident_codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Held
 
 
 def vectors_of(transaction: Reading, chunks: Ids) -> tuple[Ids, Halves]:
-    found = rows(
-        transaction,
-        VectorRow,
-        "SELECT chunk, vector FROM vectors WHERE chunk IN (SELECT value FROM json_each(?)) ORDER BY chunk",
-        (json.dumps(ints(chunks)),),
-    )
+    asked = ints(chunks)
+    touched(transaction, TOUCH_VECTORS, asked)
+    found = rows(transaction, VectorRow, VECTORS, (json.dumps(asked),))
     width = width_held(transaction) or 0
     if any(len(row.vector) != 2 * width for row in found):
         raise DamagedError(f"a vector of the store is not of its {width:,} dimensions")
