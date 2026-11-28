@@ -15,7 +15,7 @@ from sift.storage.former import former_store
 from sift.storage.writer import sole_writer
 from tests.damage import damage_table
 from tests.files import write
-from tests.former_homes import former_home, hashed
+from tests.former_homes import PINNED_FAKE, former_home, hashed
 from tests.homes import quiet
 
 NOTES = {
@@ -38,7 +38,7 @@ def changed(former: Path, *statements: str) -> None:
 
 
 def brought(home: Path, former: Path) -> Brought | Skipped:
-    (one,) = imported(home, ImportHome(str(former)), quiet).collections
+    (one,) = imported(home, ImportHome(str(former)), quiet, embedding=PINNED_FAKE).collections
     return one.outcome
 
 

@@ -5,13 +5,14 @@ from typing import cast
 
 from sift.settings import Settings
 from tests.files import write
-from tests.former_homes import former_home, hashed
+from tests.former_homes import PINNED_FAKE, former_home, hashed
 from tests.surface.commands import ran
 
 NOTE = " note  this home holds the index of sift 1.x, which sift 2 reads once it is imported\n next  sift import\n"
 
 
 def test_sift_import_brings_a_home_of_sift_1_in_and_shows_its_counts(settings: Settings, tmp_path: Path) -> None:
+    settings = dataclasses.replace(settings, embed_model=PINNED_FAKE)
     write(tmp_path / "notes" / "rl.md", "# Reward shaping\n\nShaped rewards.\n")
     former = former_home(tmp_path, {"notes": tmp_path / "notes"}, hashed())
     code, out, err = ran(settings, "import", "--home", str(former))
@@ -52,4 +53,5 @@ def test_an_import_that_skips_a_collection_says_why_and_fails(settings: Settings
     (tmp_path / "notes" / "rl.md").unlink()
     (tmp_path / "notes").rmdir()
     code, out, err = ran(settings, "import", "--home", str(former))
-    assert (code, out, err.split("\n")[1]) == (1, "", "  fix  give the folder whose files the collection holds")
+    fixed = err.split("\n")[1].startswith("  fix  bring its folder back, then import it again")
+    assert (code, out, fixed) == (1, "", True)

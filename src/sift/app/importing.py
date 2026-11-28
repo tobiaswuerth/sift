@@ -197,9 +197,11 @@ def _brought(one: Collection, former: FormerCollection, model: str | None) -> Br
 
 def _imported(home: Path, former: FormerCollection, asked: _Importing) -> Brought | Skipped:
     if not Path(former.folder).is_dir():
-        return Skipped(
+        gone = Skipped(
             Problem.FOLDER_MISSING, FOLDER_GONE.format(folder=former.folder), FOLDER_GONE_REMEDY, former.name
         )
+        asked.report(Noted(gone.message, gone.remedy, gone.code))
+        return gone
     one = _placed(home, former, asked.source)
     if not former.active:
         deactivate(home, DeactivateCollections((one.name,)))
