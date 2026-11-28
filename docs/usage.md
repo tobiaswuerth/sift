@@ -147,7 +147,8 @@ The commands' options; the MCP tool `search` takes the same as parameters (`k`, 
 | `--budget SECONDS` | Stop after about this long, once anything is found, with the results marked `partial` |
 | `--candidates N` | Hybrid search only: how many passages each of keyword and semantic search hands the reranker (default 40) |
 
-Over MCP, `search` takes up to 20 queries in one call, returning the results of each; the queries share the budget.
+Over MCP, `search` takes up to 20 queries in one call and searches them at the same time, each within the budget,
+returning the results of each.
 
 ### Keyword syntax
 
