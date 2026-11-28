@@ -1,4 +1,5 @@
 import contextlib
+import sqlite3
 import tempfile
 import threading
 from collections.abc import Generator, Iterable, Sequence
@@ -8,9 +9,19 @@ import pytest
 
 from sift.api.errors import StoreUnavailableError
 from sift.domain.errors import DamagedError
-from sift.storage.database import Batches, Connection, Reading, rows, run, writing
+from sift.storage.database import Batches, Connection, Reading, WritingDocuments, rows, run, writing
 from sift.storage.keyword_beside import built
-from sift.storage.keyword_reads import STUCK_REMEDY, Named, Passages, Span, passages_at_once, read_ahead, read_in
+from sift.storage.keyword_reads import (
+    STUCK_REMEDY,
+    Named,
+    Passages,
+    ReadPart,
+    Span,
+    passages_at_once,
+    passages_of,
+    read_ahead,
+    read_in,
+)
 from sift.storage.keywords import remade, remake_started, writing_keywords
 from tests.keyword_indexes import NOTES, TWO, checked, staled
 from tests.keyword_orders import placed, placed_in
@@ -128,7 +139,8 @@ def test_a_part_not_read_in_time_says_reading_the_store_is_stuck_without_waiting
             list(reads)
         left = readers_left()
         release.set()
-    assert (left != [], told.value.remedy, until(lambda: readers_left() == [])) == (True, STUCK_REMEDY, True)
+        assert until(lambda: readers_left() == [])
+    assert (left != [], told.value.remedy) == (True, STUCK_REMEDY)
 
 
 def test_an_order_and_a_remake_read_their_passages_beside_the_writer_and_new_documents_where_they_are_written() -> None:
@@ -147,3 +159,58 @@ def test_an_order_and_a_remake_read_their_passages_beside_the_writer_and_new_doc
             assert max(remade(connection, TWO)) == len(ids)
         assert reads_of(statements) == []
         checked(connection)
+
+
+def closed(connection: Connection) -> bool:
+    try:
+        _ = connection.total_changes
+    except sqlite3.ProgrammingError:
+        return True
+    return False
+
+
+def left_while_reading(
+    transaction: WritingDocuments, spans: Sequence[Span], read: ReadPart, entered: threading.Event
+) -> None:
+    with read_ahead(transaction, spans, read=read):
+        waited(entered)
+        raise RuntimeError("left")
+
+
+def test_reading_ahead_left_by_an_error_lets_each_reader_finish_on_its_connection_and_then_closes_it() -> None:
+    release, entered = threading.Event(), threading.Event()
+    used: list[Connection] = []
+    failed: list[BaseException] = []
+
+    def late(transaction: Reading, spans: Sequence[Span]) -> Passages:
+        used.append(transaction.connection)
+        entered.set()
+        waited(release)
+        try:
+            return passages_at_once(transaction, spans)
+        except BaseException as error:
+            failed.append(error)
+            raise
+
+    with noted() as connection, writing_keywords(connection, PARTS) as transaction:
+        spans = spans_of(transaction)
+        with pytest.raises(RuntimeError, match="left"):
+            left_while_reading(transaction, spans, late, entered)
+        release.set()
+        assert until(lambda: readers_left() == [])
+    assert (failed, used != [], all(closed(each) for each in used)) == ([], True, True)
+
+
+@pytest.mark.parametrize("read", [passages_of, passages_at_once])
+def test_a_passage_whose_document_is_gone_is_damage(read: ReadPart) -> None:
+    with noted() as connection:
+        with writing(connection) as transaction:
+            spans = spans_of(transaction)
+        connection.execute("PRAGMA foreign_keys = OFF")
+        with writing(connection) as transaction:
+            run(transaction, "DELETE FROM documents WHERE id = ?", (spans[-1].document,))
+        with (
+            writing(connection) as transaction,
+            pytest.raises(DamagedError, match="the document of a passage is missing"),
+        ):
+            read(transaction, spans)
