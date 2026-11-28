@@ -1,0 +1,225 @@
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
+from typing import TypeGuard
+
+from sift.api.events import Advanced, FilesKept, Noted
+from sift.app.filing import Job, Limits, StoredHere, Tally, too_large_to_describe
+from sift.app.records import records_stored, stored_records
+from sift.app.scans import ScanRun, ScansRead, scans_read
+from sift.app.streamed import stored_note
+from sift.domain.plan.indexing import IndexPlan, Stat, batches
+from sift.domain.text.documents import Again, FileRead, Outcome, Refused, text_held, too_large
+from sift.domain.text.kinds import READ_HERE, FileKind, kind_of, streamed
+from sift.ingest.files import Identity
+from sift.ingest.readers import ToRead
+from sift.ingest.sandbox import FileReading
+from sift.storage.database import WritingDocuments, reading
+from sift.storage.documents import (
+    Mark,
+    clear_unreadable,
+    digests_of,
+    kept,
+    mark_unreadable,
+    put_source,
+)
+from sift.storage.forgetting import delete_documents, delete_sources, documents_at
+from sift.storage.kept_vectors import vectors_held
+from sift.storage.keywords import writing_documents
+from sift.storage.replacing import documents_replaced
+
+PROBLEMS_APART = "; "
+
+
+def _described(read: FileRead, limits: Limits) -> FileRead:
+    found = [(each, too_large_to_describe(each, limits.most_description_bytes)) for each in read.documents]
+    kept = tuple(each for each, problem in found if problem is None)
+    large = (f"{each.key}: {problem}" if each.key else problem for each, problem in found if problem is not None)
+    return replace(read, documents=kept, problems=(*read.problems, *large))
+
+
+def _refused(
+    transaction: WritingDocuments, path: str, stat: Stat, refused: Refused, release: Callable[[], str]
+) -> Tally:
+    under = release() if refused.again is Again.NEXT_RELEASE else None
+    mark_unreadable(transaction, path, Mark(refused.problem, refused.again is Again.NEXT_INDEX, stopped_under=under))
+    if refused.again is Again.NEXT_INDEX:
+        return Tally()
+    source = put_source(transaction, path, stat.modified_ns, stat.size)
+    if refused.again is Again.NEXT_RELEASE:
+        return Tally()
+    gone = [document.id for document in kept(transaction, source)]
+    delete_documents(transaction, gone)
+    return Tally(removed=len(gone))
+
+
+def _stored(
+    transaction: WritingDocuments, path: str, stat: Stat, read: FileRead | Refused, release: Callable[[], str]
+) -> Tally:
+    match read:
+        case Refused():
+            return _refused(transaction, path, stat, read, release)
+        case _:
+            return _file_stored(transaction, path, stat, read)
+
+
+def _file_stored(transaction: WritingDocuments, path: str, stat: Stat, read: FileRead) -> Tally:
+    source = put_source(transaction, path, stat.modified_ns, stat.size)
+    held = {document.key: document for document in kept(transaction, source)}
+    found = documents_replaced(transaction, source, path, held, read.documents)
+    if read.problems:
+        under = None if read.skipped_under is None else read.skipped_under.value
+        problem = PROBLEMS_APART.join(read.problems)
+        mark_unreadable(transaction, path, Mark(problem, read.read_again, skipped_under=under))
+    return Tally(added=len(found.new), changed=len(found.changed), removed=len(found.gone))
+
+
+def readied(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
+    most = job.limits.most_file_bytes
+    with writing_documents(job.connection, job.limits.batches) as transaction:
+        vectors_held(transaction, documents_at(transaction, plan.drop))
+        clear_unreadable(transaction, plan.forget)
+        release = job.readers.release
+        large = [
+            _refused(transaction, path, files[path], too_large(files[path].size, most), release)
+            for path in plan.too_large
+        ]
+    return sum(large, Tally())
+
+
+def dropped(job: Job, plan: IndexPlan) -> Tally:
+    if not plan.drop:
+        return Tally()
+    with writing_documents(job.connection, job.limits.batches) as transaction:
+        return Tally(removed=delete_sources(transaction, plan.drop))
+
+
+@dataclass(slots=True)
+class _Run:
+    job: Job
+    files: Mapping[str, Stat]
+    identities: Mapping[str, Identity]
+    done: int = 0
+    written: int = 0
+
+    def advanced(self) -> None:
+        self.done += 1
+        self.job.report(Advanced(self.done))
+
+    def kept(self, files: int) -> None:
+        self.written += files
+        self.job.report(FilesKept(self.written))
+
+    def asked(self, path: str) -> ToRead:
+        job = self.job
+        most, title_from = job.limits.most_file_bytes, job.collection.choices.title_from
+        return ToRead(job.collection.folder / path, self.files[path].size, most, self.identities.get(path), title_from)
+
+
+def _scanned(outcome: Outcome) -> TypeGuard[FileRead]:
+    return isinstance(outcome, FileRead) and bool(outcome.scans)
+
+
+def _finished(run: _Run, outcome: Outcome) -> Outcome:
+    return outcome if isinstance(outcome, Refused) else _described(outcome, run.job.limits)
+
+
+def _scans_finished(run: _Run, scans: ScanRun, path: str, read: FileRead) -> ScansRead:
+    with reading(run.job.connection) as transaction:
+        held = digests_of(transaction, path)
+    found = scans_read(scans, path, read, held)
+    return replace(found, read=_described(found.read, run.job.limits))
+
+
+def _read_and_written(
+    run: _Run, read_files: FileReading, paths: Sequence[str]
+) -> tuple[Tally, list[tuple[str, FileRead]]]:
+    tally, plain, held = Tally(), list[tuple[str, Outcome]](), 0
+    scanned: dict[int, FileRead] = {}
+    for at, outcome in read_files([run.asked(path) for path in paths]):
+        if _scanned(outcome):
+            scanned[at] = outcome
+            continue
+        run.advanced()
+        finished = _finished(run, outcome)
+        plain.append((paths[at], finished))
+        held += text_held(finished)
+        if held >= run.job.limits.most_characters_a_write:
+            tally += _written(run, plain, ())
+            plain, held = [], 0
+    tally += _written(run, plain, ())
+    return tally, [(paths[at], scanned[at]) for at in sorted(scanned)]
+
+
+def _stored_here(
+    job: Job, transaction: WritingDocuments, path: str, stat: Stat, scanned: Identity | None
+) -> StoredHere | Refused:
+    store = records_stored if kind_of(path) is FileKind.RECORDS else stored_note
+    return store(job, transaction, path, stat, scanned)
+
+
+def _written(run: _Run, read: Sequence[tuple[str, Outcome]], here: Sequence[str]) -> Tally:
+    job, files, tally = run.job, run.files, Tally()
+    if not read and not here:
+        return tally
+    release = job.readers.release
+    with writing_documents(job.connection, job.limits.batches) as transaction:
+        whole = [path for path, outcome in read if _whole(outcome)]
+        for path, outcome in read:
+            tally += _stored(transaction, path, files[path], outcome, release)
+        for path in here:
+            stored = _stored_here(job, transaction, path, files[path], run.identities.get(path))
+            if isinstance(stored, Refused):
+                tally += _refused(transaction, path, files[path], stored, release)
+            elif stored.problem is None:
+                tally += stored.tally
+                whole.append(path)
+            else:
+                tally += stored.tally
+                mark_unreadable(transaction, path, Mark(stored.problem, read_again=stored.read_again))
+                if not stored.read_again:
+                    job.report(Noted(f"{path}: {stored.problem}"))
+            run.advanced()
+        clear_unreadable(transaction, whole)
+    run.kept(len(read) + len(here))
+    for path, outcome in read:
+        if isinstance(outcome, FileRead) and outcome.problems:
+            job.report(Noted(f"{path}: {PROBLEMS_APART.join(outcome.problems)}"))
+    return tally
+
+
+def _batch_stored(run: _Run, read_files: FileReading, scans: ScanRun, batch: Sequence[str]) -> Tally:
+    paths = [path for path in batch if kind_of(path) not in READ_HERE]
+    tally, scanned = _read_and_written(run, read_files, paths)
+    tally += _written(run, (), [path for path in batch if kind_of(path) in READ_HERE])
+    held: list[tuple[str, Outcome]] = []
+    for path, outcome in scanned:
+        found = _scans_finished(run, scans, path, outcome)
+        if found.model_ready:
+            tally += _written(run, [(path, found.read)], ())
+            run.advanced()
+        else:
+            held.append((path, found.read))
+    tally += _written(run, held, ())
+    for _ in held:
+        run.advanced()
+    return tally
+
+
+def read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat], identities: Mapping[str, Identity]) -> Tally:
+    tally, limits, run = Tally(), job.limits, _Run(job, files, identities)
+    large = frozenset(path for path in plan.read if streamed(path) and files[path].size > limits.most_bytes_a_write)
+    for path in sorted(large):
+        tally += stored_records(job, path, files[path], job.collection.choices.records, identities.get(path))
+        run.advanced()
+        run.kept(1)
+    whole = tuple(path for path in plan.read if path not in large)
+    with job.readers.files() as read_files, job.readers.scanning.pictures() as picturing:
+        scans = ScanRun(job.ocr, picturing, job.report)
+        written = (limits.first_files_a_write, limits.most_files_a_write, limits.most_bytes_a_write)
+        for batch in batches(whole, files, *written):
+            tally += _batch_stored(run, read_files, scans, batch)
+    return tally
+
+
+def _whole(outcome: FileRead | Refused) -> bool:
+    return isinstance(outcome, FileRead) and not outcome.problems

@@ -1,11 +1,11 @@
 name: Release
 
-# Runs when CI has passed on a commit of main. When that commit's sift/__init__.py names a version without a tag, it
+# Runs when CI has passed on a commit of main. When that commit's pyproject.toml names a version without a tag, it
 # publishes that version to PyPI and makes a GitHub release, tagging that commit. See "Releasing" in docs/CONTRIBUTING.md.
 on:
   # zizmor warns of this trigger wherever it stands: it runs with this repository's rights for any run of CI, a
   # fork's pull request too. The `check` job's conditions keep it to main's own, which a test holds
-  # (tests/test_package.py), and nothing that run made is used but its commit.
+  # (tests/repository/test_release.py), and nothing that run made is used but its commit.
   workflow_run:  # zizmor: ignore[dangerous-triggers]
     workflows: [CI]
     types: [completed]
@@ -30,6 +30,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       new: ${{ steps.version.outputs.new }}
+      prerelease: ${{ steps.notes.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -38,7 +39,7 @@ jobs:
       - name: Is this version released yet?
         id: version
         run: |
-          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' sift/__init__.py)
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           status=0  # git ls-remote --exit-code: 0 the tag is there, 2 it isn't; anything else, it couldn't tell
           git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || status=$?
@@ -47,35 +48,36 @@ jobs:
             2) echo "v$version is new."; echo "new=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "::error::git ls-remote failed ($status): whether v$version is released is unknown"; exit "$status" ;;
           esac
+      - name: Does the changelog say what this version changes?
+        id: notes
+        if: steps.version.outputs.new == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 -m tools release notes "$VERSION" > /dev/null
+          echo "prerelease=$(python3 -m tools release prerelease "$VERSION")" >> "$GITHUB_OUTPUT"
 
   build:
+    # The sources and a wheel for each platform, built from the commit CI tested and handed on as one artifact only
+    # when they are whole. The workflow that builds them is main's as it is now, like this one: a workflow that
+    # follows a run of CI is never that commit's own.
     needs: check
     if: needs.check.outputs.new == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false  # no step after it pushes with git
-          ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
-        with:
-          version: "0.13.9"  # the uv that builds what PyPI gets, as reviewed: not whichever is newest that day
-          python-version: "3.12"
-      - run: uv build --build-constraints .github/requirements-build.txt --require-hashes
-      - run: uvx twine@7.0.0 check --strict dist/*
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
+    # zizmor asks for GitHub's newer form, `$/.github/workflows/wheels.yml`, which actionlint 1.7.12, the newest,
+    # refuses: `./` it is, as GitHub has taken it since 2022, until both read the newer one.
+    uses: ./.github/workflows/wheels.yml  # zizmor: ignore[self-repository]
+    with:
+      ref: ${{ github.event.workflow_run.head_sha }}
 
   publish:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # A workflow_run always runs on the default branch, so the environment's rule of main only always holds: the
+    # check job's conditions are what keep a release to main's own pushes. A required reviewer on the environment,
+    # set in the repository's settings, would put one click between a merge and PyPI.
     environment:
-      name: pypi  # which deploys from main only
+      name: pypi
       url: https://pypi.org/project/sift-rag/
     permissions:
       id-token: write  # trusted publishing: PyPI verifies this workflow, no token needed
@@ -85,6 +87,8 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
+        with:
+          skip-existing: true  # run again after PyPI took some of the files, this job sends the rest
 
   github-release:
     needs: [check, publish]
@@ -106,7 +110,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check.outputs.version }}
           COMMIT: ${{ github.event.workflow_run.head_sha }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
         run: |
-          awk -v v="$VERSION" '/^## \[/ { found = index($0, "[" v "]") } found && !/^## \[/ && !/^\[.*\]: /' \
-            CHANGELOG.md > notes.md
-          gh release create "v$VERSION" dist/* --target "$COMMIT" --title "v$VERSION" --notes-file notes.md
+          python3 -m tools release notes "$VERSION" > notes.md
+          pre=()
+          if [ "$PRERELEASE" = true ]; then pre=(--prerelease); fi
+          gh release create "v$VERSION" dist/* --target "$COMMIT" --title "v$VERSION" --notes-file notes.md "${pre[@]}"

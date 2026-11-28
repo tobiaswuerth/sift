@@ -1,0 +1,44 @@
+[package]
+name = "sift-native"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[features]
+python = ["dep:mimalloc", "dep:pyo3"]
+
+[dependencies]
+flate2 = { version = "1.1.11", default-features = false, features = ["zlib-rs"] }
+mimalloc = { version = "0.1.52", default-features = false, features = ["local_dynamic_tls"], optional = true }
+pyo3 = { version = "0.30.1", features = ["abi3-py312"], optional = true }
+rayon = "1.12.0"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "symbols"
+
+[lints.rust]
+unsafe_code = "forbid"
+warnings = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+as_conversions = "deny"
+dbg_macro = "deny"
+exit = "deny"
+expect_used = "deny"
+mem_forget = "deny"
+panic = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unwrap_used = "deny"

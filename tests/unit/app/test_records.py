@@ -1,0 +1,360 @@
+import json
+from collections.abc import Generator, Iterator, Sequence
+from contextlib import closing, contextmanager
+from pathlib import Path
+from typing import NamedTuple
+
+import pytest
+from hypothesis import example, given
+from hypothesis import strategies as st
+
+from sift.api.collections import AddCollection, Counted, ShowStatus
+from sift.api.embedding import EmbedCollections
+from sift.api.errors import InvalidRequestError
+from sift.api.events import Event, Noted
+from sift.api.indexing import IndexCollections, Indexed
+from sift.api.search import SearchKeywords
+from sift.app.collections import add, status
+from sift.app.documents import documents
+from sift.app.embedding import embed
+from sift.app.filing import LIMITS, Limits, Lines, Readers
+from sift.app.indexing import index
+from sift.app.records import DESCRIBED_WITHIN
+from sift.app.search import search
+from sift.domain.plan.segments import POLICY, Held, backlog_merges, merges
+from sift.domain.text.documents import Outcome
+from sift.domain.text.notes import Document
+from sift.domain.text.records import GIVE_IDS, NO_CHOICE, SkippedLine, record_of
+from sift.ingest.files import Identity
+from sift.ingest.readers import ToRead
+from sift.ingest.records import lines_of
+from sift.ingest.sandbox import FileReading, OpenReading
+from sift.interfaces.cli.written import written
+from sift.storage.catalog import known_collections
+from sift.storage.database import reading, rows
+from sift.storage.documents import counts, description_bytes
+from sift.storage.store import open_store
+from sift.storage.vector_meta import left
+from tests.files import TORN, jsonl, torn_lines, write
+from tests.homes import asked, quiet, text_of
+from tests.keyword_stores import vectors_by_text
+from tests.later import later
+from tests.models import Hashed
+
+PAPERS: list[dict[str, object]] = [
+    {"id": "2101.00001", "title": "Brush stroke planning", "abstract": "A robot plans brush strokes.", "year": 2021},
+    {"id": "2101.00002", "title": "Reward shaping", "abstract": "Shaping speeds up learning.", "year": 2021},
+    {"id": "hep-th/9901001", "title": "String junctions", "abstract": "Heterotic strings and junctions.", "year": 1999},
+]
+BRUSH, SHAPING = "arxiv/2021/2021-01.jsonl#2101.00001", "arxiv/2021/2021-01.jsonl#2101.00002"
+STRINGS = "arxiv/1999/1999-01.jsonl#hep-th/9901001"
+
+
+def indexed(
+    home: Path, limits: Limits | None = None, said: list[Event] | None = None, lines: Lines = lines_of
+) -> Indexed:
+    heard: list[Event] = [] if said is None else said
+    (one,) = index(
+        home, IndexCollections(), heard.append, limits or Limits(), Readers(lines=lines, clock=later)
+    ).collections
+    assert isinstance(one.outcome, Indexed)
+    return one.outcome
+
+
+def found(home: Path, query: str, filters: tuple[str, ...] = ()) -> list[str]:
+    asked = SearchKeywords(query, k=20, filters=tuple(map(written, filters)))
+    return sorted(hit.id for hit in search(home, asked).hits)
+
+
+@pytest.fixture
+def papers(tmp_path: Path) -> Path:
+    root, home = tmp_path / "arxiv", tmp_path / "home"
+    write(root / "2021" / "2021-01.jsonl", jsonl(PAPERS[:2]))
+    write(root / "1999" / "1999-01.jsonl", jsonl(PAPERS[2:]))
+    write(root / "notes.md", "# Notes\n\nA Markdown file in the same collection.\n")
+    add(home, AddCollection(str(root)))
+    indexed(home)
+    return home
+
+
+def test_each_line_of_a_json_lines_file_is_a_document_named_by_its_file_and_id(papers: Path) -> None:
+    assert found(papers, "brush") == [BRUSH]
+    assert text_of(papers, BRUSH) == "# Brush stroke planning\n\nA robot plans brush strokes."
+    assert found(papers, "strings") == [STRINGS]
+    assert found(papers, "learning OR strokes OR junctions", ("year=1999",)) == [STRINGS]
+    (shown,) = documents(papers, asked(BRUSH, fields=("year", "authors"))).found
+    assert shown.fields == {"year": 2021}
+
+
+def test_only_changed_records_are_stored_again_and_gone_ones_leave(papers: Path, tmp_path: Path) -> None:
+    root = tmp_path / "arxiv"
+    changed = [PAPERS[0], {**PAPERS[1], "abstract": "Shaping is now different."}, {"id": "2101.00003", "text": "New."}]
+    write(root / "2021" / "2021-01.jsonl", jsonl(changed))
+    again = indexed(papers)
+    assert (again.added, again.changed, again.removed) == (1, 1, 0)
+    assert text_of(papers, SHAPING) == "# Reward shaping\n\nShaping is now different."
+    assert found(papers, "speeds") == []
+    write(root / "2021" / "2021-01.jsonl", jsonl(PAPERS[:1]))
+    write(root / "1999" / "1999-01.jsonl", "")
+    gone = indexed(papers)
+    assert (gone.added, gone.changed, gone.removed) == (0, 0, 3)
+    assert found(papers, "junctions OR shaping OR new") == []
+    unchanged = indexed(papers)
+    assert (unchanged.added, unchanged.changed, unchanged.removed) == (0, 0, 0)
+
+
+def test_vectors_of_unchanged_records_are_kept(papers: Path, tmp_path: Path) -> None:
+    embed(papers, EmbedCollections(), quiet, Hashed())
+    write(tmp_path / "arxiv" / "2021" / "2021-01.jsonl", jsonl([PAPERS[0], {**PAPERS[1], "abstract": "New text."}]))
+    indexed(papers)
+    (one,) = known_collections(papers)
+    with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+        assert left(transaction) == 1
+
+
+def test_a_record_whose_fields_alone_changed_keeps_its_vector(papers: Path, tmp_path: Path) -> None:
+    embed(papers, EmbedCollections(), quiet, Hashed())
+    (one,) = known_collections(papers)
+    with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+        before = vectors_by_text(transaction)
+    write(tmp_path / "arxiv" / "2021" / "2021-01.jsonl", jsonl([PAPERS[0], {**PAPERS[1], "year": 2022}]))
+    assert indexed(papers).changed == 1
+    with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+        assert (left(transaction), vectors_by_text(transaction)) == (0, before)
+
+
+def test_lines_without_a_record_are_skipped_and_said(tmp_path: Path) -> None:
+    lines = ["{not json", "[1, 2]", json.dumps({"id": 1}), json.dumps({"id": 2, "text": "kept"}), ""]
+    lines += [json.dumps({"id": 2, "text": "again"}), json.dumps({"id": "a\x00b", "text": "nul"})]
+    lines += [json.dumps({"id": "a\ufffdb", "text": "same key"}), "[]"]
+    write(tmp_path / "c" / "r.jsonl", "\n".join(lines) + "\n")
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    said: list[Event] = []
+    indexed(home, said=said)
+    assert found(home, "kept OR again OR nul OR same") == ["c/r.jsonl#2", "c/r.jsonl#a\ufffdb"]
+    assert text_of(home, "c/r.jsonl#a\ufffdb") == "same key"
+    (noted,) = [each for each in said if isinstance(each, Noted)]
+    assert noted.text.startswith("r.jsonl: 6 lines skipped (line 1: not JSON; line 2: not an object; line 3: no text")
+    assert noted.text.endswith("; ...)")
+    (contents,) = [each.contents for each in status(home, ShowStatus(unreadable=True)).collections]
+    assert isinstance(contents, Counted)
+    assert [(each.path, each.problem) for each in contents.unreadable_files] == [("r.jsonl", noted.text[9:])]
+
+
+def test_fields_may_be_chosen_when_the_collection_is_added(tmp_path: Path) -> None:
+    write(tmp_path / "c" / "qa.jsonl", json.dumps({"key": "q1", "q": "Why?", "a": "Because.", "text": "not this"}))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c"), id_field="key", title_field="q", text_fields=("q", "a")))
+    indexed(home)
+    assert text_of(home, "c/qa.jsonl#q1") == "# Why?\n\nWhy?\n\nBecause."
+
+
+@pytest.mark.parametrize("id_field, title_field, text_fields", [(None, None, ("",)), (" ", None, ()), (None, "", ())])
+def test_a_field_chosen_must_be_named(
+    tmp_path: Path, id_field: str | None, title_field: str | None, text_fields: tuple[str, ...]
+) -> None:
+    (tmp_path / "c").mkdir()
+    with pytest.raises(InvalidRequestError, match="field"):
+        add(
+            tmp_path / "home",
+            AddCollection(str(tmp_path / "c"), id_field=id_field, title_field=title_field, text_fields=text_fields),
+        )
+
+
+def counting(home: Path, held: list[int]) -> Lines:
+    def counted(path: Path, most: int, scanned: Identity | None) -> Iterator[tuple[int, str | SkippedLine]]:
+        (one,) = known_collections(home)
+        for line in lines_of(path, most, scanned):
+            with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+                held.append(counts(transaction).documents)
+            yield line
+
+    return counted
+
+
+def test_a_large_file_is_stored_a_batch_at_a_time_as_it_is_read(tmp_path: Path) -> None:
+    records = [{"id": n % 9, "text": f"record {n}"} for n in range(12)]
+    write(tmp_path / "c" / "big.jsonl", jsonl(records))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    small = Limits(most_records_a_write=4, most_bytes_a_write=1)
+    said: list[Event] = []
+    held: list[int] = []
+    first = indexed(home, small, said, counting(home, held))
+    assert (first.added, first.removed, held[0], held[-1]) == (9, 0, 0, 8)
+    assert text_of(home, "c/big.jsonl#3") == "record 3"
+    assert any(isinstance(each, Noted) and "line 10: id 0 used twice" in each.text for each in said)
+    write(tmp_path / "c" / "big.jsonl", jsonl([*records[:5], {"id": 5, "text": "changed"}]))
+    second = indexed(home, small)
+    assert (second.added, second.changed, second.removed) == (0, 1, 3)
+    assert text_of(home, "c/big.jsonl#5") == "changed"
+
+
+def watching(asked: list[str]) -> OpenReading:
+    @contextmanager
+    def opened() -> Generator[FileReading]:
+        def read(files: Sequence[ToRead]) -> Iterator[tuple[int, Outcome]]:
+            asked.extend(each.path.name for each in files)
+            return iter(())
+
+        yield read
+
+    return opened
+
+
+def test_a_file_of_records_however_large_is_read_here_and_given_to_no_reader_process(tmp_path: Path) -> None:
+    write(tmp_path / "c" / "big.jsonl", jsonl([{"id": n, "text": f"record {n}"} for n in range(500)]))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    asked: list[str] = []
+    (one,) = index(home, IndexCollections(), quiet, Limits(), Readers(files=watching(asked))).collections
+    assert (one.outcome, asked) == (Indexed(files=1, added=500, changed=0, removed=0, unreadable=0), [])
+
+
+def test_a_write_of_long_records_ends_by_the_text_it_holds_as_well(tmp_path: Path) -> None:
+    write(tmp_path / "c" / "big.jsonl", jsonl([{"id": n, "text": "word " * 30} for n in range(6)]))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    held: list[int] = []
+    large = Limits(most_characters_a_write=100, most_bytes_a_write=1)
+    assert indexed(home, large, lines=counting(home, held)).added == 6
+    assert held == [0, 1, 2, 3, 4, 5]
+
+
+def test_a_record_longer_than_a_line_may_be_is_skipped_and_files_in_utf_16_are_read(tmp_path: Path) -> None:
+    lines = [json.dumps({"id": 1, "text": "x" * 50}), '{"id": 2, "text": "' + "\N{EURO SIGN}" * 15 + '"}']
+    write(tmp_path / "c" / "r.jsonl", "\n".join([*lines, json.dumps({"id": 3, "text": "short"})]) + "\n")
+    (tmp_path / "c" / "wide.jsonl").write_bytes(jsonl([{"id": "w", "text": "wide text"}]).encode("utf-16"))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    said: list[Event] = []
+    indexed(home, Limits(most_record_characters=40), said)
+    assert found(home, "short OR wide") == ["c/r.jsonl#3", "c/wide.jsonl#w"]
+    (noted,) = [each.text for each in said if isinstance(each, Noted)]
+    assert "line 1: longer than the 40 characters a line may hold" in noted
+    assert "line 2" not in noted
+    assert text_of(home, "c/r.jsonl#2") == "\N{EURO SIGN}" * 15
+
+
+def test_a_record_whose_title_and_fields_take_more_than_a_document_holds_is_skipped(tmp_path: Path) -> None:
+    write(
+        tmp_path / "c" / "r.jsonl", jsonl([{"id": 1, "title": "x" * 300, "text": "long"}, {"id": 2, "text": "short"}])
+    )
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    said: list[Event] = []
+    assert indexed(home, Limits(most_description_bytes=200), said).added == 1
+    assert found(home, "long OR short") == ["c/r.jsonl#2"]
+    (noted,) = [each.text for each in said if isinstance(each, Noted)]
+    assert "line 1: " in noted
+    assert "bytes of name, title and fields, more than the 200 a document holds" in noted
+
+
+@pytest.mark.parametrize("most_bytes_a_write", [64 << 20, 1], ids=["with other files", "streamed alone"])
+def test_a_file_that_cannot_be_read_to_its_end_keeps_what_was_read_and_is_read_again(
+    tmp_path: Path, most_bytes_a_write: int
+) -> None:
+    write(tmp_path / "c" / "r.jsonl", jsonl([{"id": n, "text": f"part {n}"} for n in range(3)]))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    limits = Limits(most_records_a_write=1, most_bytes_a_write=most_bytes_a_write)
+    said: list[Event] = []
+    assert indexed(home, limits, said, lines=torn_lines).added == 2
+    assert [each for each in said if isinstance(each, Noted)] == []
+    assert found(home, "part") == ["c/r.jsonl#0", "c/r.jsonl#1"]
+    (contents,) = [each.contents for each in status(home, ShowStatus(unreadable=True)).collections]
+    assert isinstance(contents, Counted)
+    assert [(each.path, each.problem) for each in contents.unreadable_files] == [("r.jsonl", TORN)]
+    again = indexed(home)
+    assert (again.added, again.changed, again.removed, again.unreadable) == (1, 0, 0, 0)
+    assert found(home, "part") == ["c/r.jsonl#0", "c/r.jsonl#1", "c/r.jsonl#2"]
+
+
+def test_a_record_with_an_id_is_not_taken_by_a_line_without_one(tmp_path: Path) -> None:
+    lines = [json.dumps({"text": "first"}), json.dumps({"id": 1, "text": "second"}), json.dumps({"text": "third"})]
+    write(tmp_path / "c" / "r.jsonl", "\n".join(lines) + "\n")
+    told = list[tuple[list[str], list[str]]]()
+    for name, field in (("lines", None), ("ids", "id")):
+        home = tmp_path / name
+        add(home, AddCollection(str(tmp_path / "c"), id_field=field))
+        said: list[Event] = []
+        indexed(home, said=said)
+        told.append((found(home, "first OR second OR third"), [each.text for each in said if isinstance(each, Noted)]))
+    assert told == [
+        (
+            ["c/r.jsonl#1", "c/r.jsonl#3"],
+            [f"r.jsonl: 1 line skipped (line 2: id 1 is also line 1's, which has no id: {GIVE_IDS})"],
+        ),
+        (["c/r.jsonl#1"], ["r.jsonl: 2 lines skipped (line 1: no id: it holds no id; line 3: no id: it holds no id)"]),
+    ]
+
+
+class Segments(NamedTuple):
+    held: int
+    written: int | None
+
+
+def keyword_segments(home: Path) -> tuple[int, int | None]:
+    (one,) = known_collections(home)
+    with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+        (found,) = rows(transaction, Segments, "SELECT count(*) AS held, max(id) AS written FROM keyword_segments")
+    return found.held, found.written
+
+
+def test_small_files_of_records_are_stored_together_in_one_keyword_segment(tmp_path: Path) -> None:
+    for n in range(30):
+        write(
+            tmp_path / "c" / f"r{n:02}.jsonl",
+            jsonl([{"id": f"{n}-{m}", "text": f"note {n} part {m}"} for m in range(3)]),
+        )
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    done = indexed(home)
+    assert (done.added, keyword_segments(home)) == (90, (1, 1))
+    assert found(home, "part") == sorted(f"c/r{n:02}.jsonl#{n}-{m}" for n in range(30) for m in range(3))[:20]
+
+
+def test_the_passages_of_a_large_file_of_records_are_merged_once_on_their_way_to_a_full_segment() -> None:
+    held = [Held(LIMITS.most_records_a_write, 0)] * (POLICY.most // LIMITS.most_records_a_write)
+    assert LIMITS.batches.merging == POLICY
+    assert merges(held[: POLICY.factor], POLICY) == (range(POLICY.factor),)
+    assert POLICY.factor * LIMITS.most_records_a_write > LIMITS.batches.chunks_a_settle
+    rewritten = 0
+    while planned := backlog_merges(held, POLICY):
+        joined = sum(each.chunks for each in held[planned[0].start : planned[0].stop])
+        rewritten += joined
+        held[planned[0].start : planned[0].stop] = [Held(joined, 0)]
+    assert ([each.chunks for each in held], rewritten) == ([POLICY.most], POLICY.most)
+
+
+type Json = bool | int | float | str | list[Json] | dict[str, Json] | None
+
+
+def nested(inner: st.SearchStrategy[Json]) -> st.SearchStrategy[Json]:
+    return st.one_of(st.lists(inner, max_size=4), st.dictionaries(st.text(max_size=8), inner, max_size=4))
+
+
+def written_line(*, fields: dict[str, Json], text: str, escaped: bool) -> str:
+    return json.dumps({**fields, "text": text}, ensure_ascii=escaped, separators=(",", ":"))
+
+
+flat: st.SearchStrategy[Json] = st.one_of(
+    st.none(), st.booleans(), st.integers(), st.floats(allow_nan=False, allow_infinity=False), st.text(max_size=20)
+)
+record_lines = st.builds(
+    written_line,
+    fields=st.dictionaries(st.text(max_size=8), st.recursive(flat, nested, max_leaves=12), max_size=6),
+    text=st.text(min_size=1, max_size=40),
+    escaped=st.booleans(),
+)
+
+
+@given(record_lines)
+@example('{"a":[1e15,1e15,1e15,1e15,1e15,1e15,1e15,1e15],"text":"t"}')
+@example('{"id":"' + "\N{MATHEMATICAL FRAKTUR CAPITAL U}" * 40 + '","text":"t"}')
+@example('{"k":"' + "\N{DEVANAGARI LETTER QA}" * 40 + '","text":"t"}')
+def test_what_a_record_s_name_title_and_fields_take_is_bounded_by_its_line(line: str) -> None:
+    found = record_of(line, 1, NO_CHOICE)
+    if isinstance(found, Document):
+        assert description_bytes(found) <= DESCRIBED_WITHIN * len(line)

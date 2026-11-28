@@ -1,0 +1,111 @@
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from types import MappingProxyType
+
+from starlette.exceptions import HTTPException
+from starlette.requests import Request
+from starlette.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
+
+from sift.api.collections import Audience
+from sift.api.errors import SiftError
+from sift.api.events import Event
+from sift.api.wire import Json
+from sift.app.documents import source_of
+from sift.interfaces.server.app import Sent, Serving, read_for
+from sift.interfaces.server.handled import Handled
+from sift.interfaces.web.page import page
+from sift.interfaces.web.style import STYLE
+from sift.interfaces.web.view import PREFIX, view_of
+
+PAGE_POLICY = (
+    "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+)
+UNKEPT = MappingProxyType(
+    {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Cross-Origin-Resource-Policy": "same-origin",
+    }
+)
+PAGE_HEADERS = MappingProxyType({**UNKEPT, "Content-Security-Policy": PAGE_POLICY})
+UNFRAMED = "frame-ancestors 'none'"
+NO_FILE = "no such file"
+NO_SUCH = 404
+NO_PAGE = "no such page"
+NOT_THAT_WAY = "this page is not asked for that way"
+OWN = frozenset({"same-origin", "none"})
+BY_A_LINK = ("navigate", "document")
+ANOTHER_SITE = "sift's pages answer this browser's own requests and links alone, not what another site's page loads"
+
+type PageAnswered = Callable[[Request], Awaitable[Response]]
+PDF = "application/pdf"
+
+
+@dataclass(frozen=True, slots=True)
+class PeopleReads:
+    serving: Serving
+    handled: Mapping[str, Handled]
+
+    def read(self, name: str, data: Json) -> object:
+        return read_for(self.serving, Sent(name, self.handled[name], data, Audience.PEOPLE))
+
+
+def _loaded_by_another_site(request: Request) -> bool:
+    site, sent = request.headers.get("sec-fetch-site"), request.headers.get
+    return site is not None and site not in OWN and (sent("sec-fetch-mode"), sent("sec-fetch-dest")) != BY_A_LINK
+
+
+def own_alone(answer: PageAnswered) -> PageAnswered:
+    async def answered(request: Request) -> Response:
+        if _loaded_by_another_site(request):
+            return PlainTextResponse(ANOTHER_SITE, status_code=403, headers=dict(UNKEPT))
+        return await answer(request)
+
+    return answered
+
+
+async def page_answered(serving: Serving, handled: Mapping[str, Handled], request: Request) -> Response:
+    view = view_of(list(request.query_params.multi_items()))
+    built = await asyncio.wrap_future(serving.pool.submit(page, view, PeopleReads(serving, handled)))
+    return HTMLResponse(built.text, headers=dict(PAGE_HEADERS))
+
+
+async def style_answered(_request: Request) -> Response:
+    return Response(STYLE, media_type="text/css", headers=dict(UNKEPT))
+
+
+async def no_page(_request: Request, error: Exception) -> Response:
+    status = error.status_code if isinstance(error, HTTPException) else NO_SUCH
+    allowed = dict(error.headers or {}) if isinstance(error, HTTPException) else {}
+    said = NO_PAGE if status == NO_SUCH else NOT_THAT_WAY
+    return PlainTextResponse(said, status_code=status, headers={**UNKEPT, **allowed})
+
+
+async def home_answered(_request: Request) -> Response:
+    return RedirectResponse(PREFIX)
+
+
+def _unheard(_event: Event) -> None:
+    return None
+
+
+def _file(serving: Serving, id_: str) -> Path | None:
+    try:
+        with serving.gate.shared(_unheard):
+            path = source_of(serving.settings.home, id_)
+    except SiftError:
+        return None
+    return path if path.is_file() else None
+
+
+async def file_answered(serving: Serving, request: Request) -> Response:
+    id_ = request.query_params.get("id", "")
+    path = await asyncio.wrap_future(serving.pool.submit(_file, serving, id_))
+    if path is None:
+        return PlainTextResponse(NO_FILE, status_code=404, headers=dict(UNKEPT))
+    response = FileResponse(path, filename=path.name, content_disposition_type="inline", headers=dict(UNKEPT))
+    response.headers["Content-Security-Policy"] = UNFRAMED if response.media_type == PDF else f"sandbox; {UNFRAMED}"
+    return response

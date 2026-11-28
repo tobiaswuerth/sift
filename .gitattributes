@@ -1,3 +1,11 @@
 * text=auto eol=lf
-# a mail as mail clients write it: lines end in CRLF
-tests/samples/sample.eml -text
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.odt binary
+*.ods binary
+*.odp binary
+*.epub binary
+*.png binary
+*.jpg binary

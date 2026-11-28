@@ -1,0 +1,60 @@
+from typing import cast
+
+import numpy as np
+from numpy.typing import NDArray
+
+from sift.domain.arrays import read_only
+
+type Floats = NDArray[np.float32]
+type Halves = NDArray[np.float16]
+type Bits = NDArray[np.uint8]
+type Words = NDArray[np.uint64]
+type Distances = NDArray[np.uint16]
+
+WORD_BYTES = 8
+MOST_BITS = int(np.iinfo(np.uint16).max)
+SCANNED = 768 << 10
+BYTE_BITS = read_only(np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).astype(np.float32))
+
+
+def width_of(values: NDArray[np.generic]) -> int:
+    return cast("int", values.shape[1])
+
+
+def code_bytes(width: int) -> int:
+    return -(-width // (8 * WORD_BYTES)) * WORD_BYTES
+
+
+def codes(matrix: Floats) -> Bits:
+    packed = np.packbits(matrix > 0, axis=1)
+    pad = code_bytes(width_of(matrix)) - width_of(packed)
+    return np.pad(packed, ((0, 0), (0, pad))) if pad else packed
+
+
+def words(bits: Bits) -> Words:
+    return np.ascontiguousarray(bits).view(np.uint64)
+
+
+def code_of(query: Floats) -> Words:
+    return words(codes(query.reshape(1, -1))).reshape(-1)
+
+
+def distances(held: Words, query: Words, scanned: int = SCANNED) -> Distances:
+    found = np.empty(len(held), np.uint16)
+    step = min(len(held), max(1, scanned // (WORD_BYTES * max(1, len(query)))))
+    differing = np.empty((step, width_of(held)), np.uint64)
+    ones = np.empty((step, width_of(held)), np.uint8)
+    for start in range(0, len(held), max(1, step)):
+        part = held[start : start + step]
+        counted = np.bitwise_count(np.bitwise_xor(part, query, out=differing[: len(part)]), out=ones[: len(part)])
+        found[start : start + step] = counted.sum(axis=1, dtype=np.uint16)
+    return found
+
+
+def bit_scores(bits: Bits, query: Floats) -> Floats:
+    width = width_of(bits)
+    padded = np.zeros(8 * width, np.float32)
+    padded[: len(query)] = query
+    table = cast("Floats", padded.reshape(width, 8) @ BYTE_BITS.T)
+    ones = table[np.arange(width), bits].sum(axis=1)
+    return 2 * ones - float(padded.sum())

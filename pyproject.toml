@@ -1,38 +1,36 @@
 [build-system]
-requires = ["setuptools>=77"]  # SPDX license expressions (PEP 639)
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
 
 [project]
 name = "sift-rag"
-dynamic = ["version"]
-description = "Local RAG search engine and MCP server for AI agents (Claude Code, Cursor, VS Code): hybrid BM25 + semantic search with reranking over Markdown and Obsidian notes, PDF, Office files and emails, fast at tens of millions of passages. Backlinks, metadata filters, browser UI. Runs on your own GPU or CPU: no cloud, no API keys."
+version = "2.0.0"
+description = "Local RAG search engine and MCP server for AI agents (Claude Code, Cursor, VS Code): hybrid BM25 + semantic search with reranking over Markdown and Obsidian notes, PDF, Office files and emails, fast at millions of passages. Backlinks, metadata filters, browser UI. Runs on your own GPU or CPU: no cloud, no API keys."
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "native/THIRD-PARTY-NOTICES"]
 authors = [{ name = "Tobias Würth" }]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-    "numpy>=2.0",  # np.bitwise_count, which counts the bits of the codes
-    "numba>=0.68",  # the scan of the codes in one pass (sift/scan.py); wheels for every platform and Python sift takes
-    "torch>=2.13",  # older releases have advisories known against them; transformers 5.18 needs 2.5
+    "numpy>=2.0",  # np.bitwise_count, which counts the bits of the codes, came with 2.0
+    "torch>=2.14",  # older releases have advisories known against them; 2.13 warns of its own deprecations compiling
     "sentence-transformers>=6.1",  # the module layout embeddinggemma-2 is saved in
     "transformers>=5.18",  # the first release with embeddinggemma-2
-    "tokenizers>=0.23.1",  # counts tokens with a copy of the model's, outside PyTorch; transformers takes none older
-    "pillow>=13",  # embeddinggemma-2 handles images and video too, so transformers needs Pillow
-    "torchvision>=0.28",  # and torchvision even for text; it must match torch (0.28 is 2.13's), so install both
-    "mcp>=2.2",
-    # what sift imports itself, though mcp and jinja2 bring them too: the HTTP servers, their event loop, the
-    # parameter schemas of the MCP tools, and the UI's escaping
-    "uvicorn>=0.31",
-    "starlette>=1.3.1",
-    "anyio>=4.14.2",
-    "pydantic>=2.12",
-    "markupsafe>=2",
-    "nvidia-ml-py>=12",  # NVML: free GPU memory as nvidia-smi sees it
-    "xberg>=1.3",  # reads PDF, office files, e-books and web pages
-    "pypdfium2>=4.30",  # the pages of scans as pictures, for OCR (Apache-2.0 and BSD-3-Clause, PDFium inside)
-    "cryptography>=50",  # the certificate `sift worker` makes for HTTPS
-    "jinja2>=3.1.6",  # the pages of `sift ui`
+    "huggingface-hub>=1.31",  # the downloads of models; transformers 5.18 needs 1.31
+    "pillow>=13",  # embeddinggemma-2 takes images too, so transformers needs Pillow; older ones have advisories
+    "torchvision>=0.29",  # and torchvision; it must match torch (0.29 is 2.14's)
+    # The four below: free GPU memory as nvidia-smi sees it (CUDA overstates it on Windows); PDF, office files,
+    # e-books and web pages as Markdown; the pages of scans as pictures for OCR; the server of the home process. No
+    # newer feature is used: each floor is the version sift was first built on, which the lowest session tests.
+    "nvidia-ml-py>=12.535.77",  # see above
+    "xberg>=1.3",  # see above
+    "pypdfium2>=4.30",  # see above
+    "uvicorn>=0.31",  # see above
+    "starlette>=1.3.1",  # the home process's HTTP API; older releases have advisories known against them
+    "cryptography>=50.0.2",  # the certificate sift worker makes for HTTPS; the version sift was first built on
+    # Compiles the embedding model for an NVIDIA GPU before many passages are embedded (torch.compile), which embeds
+    # them twice as fast. PyTorch's builds for Linux bring Triton; those for Windows do not. The first build for 3.9.
+    "triton-windows>=3.9.0.post30; sys_platform == 'win32'",  # see above
 ]
 keywords = [
     "rag",
@@ -73,7 +71,6 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -94,68 +91,245 @@ Issues = "https://github.com/tobiaswuerth/sift/issues"
 Changelog = "https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md"
 Benchmarks = "https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md"
 
-[project.optional-dependencies]
+[project.scripts]
+sift = "sift.interfaces.cli.main:main"
+sift-rag = "sift.interfaces.cli.main:main"
+
+[dependency-groups]
+gate = ["nox==2026.10.20"]
 dev = [
-    "pytest>=8",
-    "pytest-cov>=5",
-    "pytest-xdist>=3.6",
-    "ruff>=0.6",
-    "pre-commit>=4",
-    "build>=1.2",
-    "twine>=6",
-    # The type checker, at one version: another finds other things, and the gate must say here what CI says. With the
-    # Node.js it runs on, so that none need be installed.
-    "pyright[nodejs]==1.1.414",
+    "basedpyright==1.40.2",
+    "hypothesis==6.170.17",
+    "import-linter==2.17",
+    "pre-commit==4.5.1",
+    "pytest==9.2.0",
+    "pytest-cov==7.0.0",
+    "pytest-timeout==2.4.0",
+    "pytest-xdist==3.8.0",
 ]
 
-[project.scripts]
-sift = "sift.cli:main"
-sift-rag = "sift.cli:main"  # so that `uvx sift-rag ...` works: uvx runs the command named like the package
+# Every version locked has wheels for the platforms CI runs on, and the same version runs on each: Xberg 1.3.9 has
+# none for Windows.
+[tool.uv]
+required-environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+constraint-dependencies = ["xberg!=1.3.9"]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "rust-toolchain.toml" },
+    { file = "native/Cargo.toml" },
+    { file = "native/Cargo.lock" },
+    { file = "native/src/**/*.rs" },
+]
 
-[tool.setuptools]
-packages = ["sift"]
+# The extension sift._native is the crate in native/, built with the package: the lists of the keyword index are
+# encoded, decoded, merged and searched there, and the passages clustered into their topical order, on every core.
+[tool.maturin]
+manifest-path = "native/Cargo.toml"
+python-source = "src"
+module-name = "sift._native"
+features = ["python"]
+locked = true
+include = [{ path = "rust-toolchain.toml", format = "sdist" }]
 
-[tool.setuptools.package-data]
-sift = ["web/*.html", "web/static/*"]  # the pages, styles and scripts of `sift ui`
+# The lock, and so the gate and CI, take PyTorch's CPU builds: the tests need no GPU, and the CUDA builds weigh
+# gigabytes. An installed sift takes whatever build its installer picks (`--torch-backend auto` picks the GPU's).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
 
-[tool.setuptools.dynamic]
-version = { attr = "sift.__version__" }
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
+src = ["src", "."]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PIE", "PT", "RUF", "PERF"]
+select = ["ALL"]
 ignore = [
-    "B905",  # zip() without strict=
-    "SIM905",  # a word list as one split string reads better than a long list literal
+    "D",       # docstrings are banned outright: tools/check_prose.py
+    "CPY001",  # the license is in LICENSE
+    "COM812",  # conflicts with the formatter
+    "EM101",   # messages are data the SiftError carries, written where it is raised
+    "EM102",
+    "TRY003",
 ]
 
-[tool.ruff.lint.flake8-pytest-style]
-parametrize-names-type = "csv"  # @pytest.mark.parametrize("a, b", ...)
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004", "S603"]
+"tools/findings.py" = ["T201", "S603", "S607"]
+"tools/__main__.py" = ["T201"]
+# The one process sift starts outside its reader sandbox: `sift serve` in a minimized window of its own, with sift's
+# own arguments alone, when an agent's `sift serve --stdio` finds no home process.
+"src/sift/interfaces/server/proxy.py" = ["S603"]
+# `sift worker` answers other machines, so its default address is every interface of this one; --host narrows it, and
+# its TLS certificate and token guard it.
+"src/sift/api/serving.py" = ["S104"]
+"tools/check_package.py" = ["T201"]
 
-[tool.pyright]
-# All of sift, strictly (tests/test_package.py holds it so). typings/ types what sift calls of packages that ship
-# no types of their own: pynvml, pypdfium2.
-include = ["sift"]
-typeCheckingMode = "strict"
-pythonVersion = "3.12"  # CI's types job's, whose packages pyright reads; the oldest sift runs on, ruff and the tests hold
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"sys.exit".msg = "raise a SiftError; each interface maps it to an exit code"
+"unittest.mock".msg = "pass a fake through a port instead of patching"
+"urllib.request".msg = "network access belongs in sift.inference (the worker client) or sift.interfaces"
+"time.monotonic".msg = "it ticks every 16 ms on Windows, so short phases take 0 s: use time.perf_counter"
+
+[tool.ruff.lint.flake8-pytest-style]
+parametrize-names-type = "csv"
+
+[tool.basedpyright]
+include = ["src", "tests", "tools", "noxfile.py"]
+pythonVersion = "3.12"
+typeCheckingMode = "recommended"
+reportAny = "error"
+reportExplicitAny = "error"
+reportMatchNotExhaustive = "error"
+reportUnusedCallResult = false  # off where calls are made for their effect; on in the core, below, where none is
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/sift/api"
+reportUnusedCallResult = "error"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/sift/domain"
+reportUnusedCallResult = "error"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "."
+
+[tool.importlinter]
+root_packages = ["sift"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers: each imports only those below it"
+type = "layers"
+layers = [
+    "sift.interfaces",
+    "sift.app",
+    "sift.retrieval | sift.ingest",
+    "sift.storage | sift.inference",
+    "sift.domain",
+    "sift.api",
+]
+
+[[tool.importlinter.contracts]]
+name = "No module imports one that imports it"
+type = "acyclic_siblings"
+ancestors = ["sift", "sift.**"]
+
+[[tool.importlinter.contracts]]
+name = "The searches share engines and hits, never each other"
+type = "independence"
+modules = ["sift.app.search", "sift.app.vsearch", "sift.app.query", "sift.app.mentions", "sift.app.similar"]
+
+[[tool.importlinter.contracts]]
+name = "The core performs no I/O"
+type = "forbidden"
+source_modules = ["sift.api", "sift.domain"]
+forbidden_modules = [
+    "asyncio",
+    "concurrent",
+    "ctypes",
+    "glob",
+    "http",
+    "io",
+    "logging",
+    "mmap",
+    "multiprocessing",
+    "os",
+    "pathlib",
+    "queue",
+    "random",
+    "secrets",
+    "shutil",
+    "signal",
+    "socket",
+    "sqlite3",
+    "ssl",
+    "subprocess",
+    "sys",
+    "tempfile",
+    "threading",
+    "time",
+    "uuid",
+]
+
+[[tool.importlinter.contracts]]
+name = "SQLite only in storage"
+type = "forbidden"
+source_modules = ["sift.api", "sift.domain", "sift.ingest", "sift.inference", "sift.retrieval", "sift.app", "sift.interfaces"]
+forbidden_modules = ["sqlite3"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Model libraries only where models run and devices are chosen"
+type = "protected"
+protected_modules = ["torch", "transformers", "sentence_transformers", "pynvml"]
+allowed_importers = ["sift.inference.accelerator", "sift.inference.held", "sift.inference.local", "sift.inference.ocr"]
+
+[[tool.importlinter.contracts]]
+name = "The document converter only where documents are converted"
+type = "protected"
+protected_modules = ["xberg"]
+allowed_importers = ["sift.ingest.converter"]
+
+[[tool.importlinter.contracts]]
+name = "The certificate library only where the worker makes its key"
+type = "protected"
+protected_modules = ["cryptography"]
+allowed_importers = ["sift.interfaces.worker.keys"]
+
+[[tool.importlinter.contracts]]
+name = "Worker processes only in the sandbox that reads files"
+type = "protected"
+protected_modules = ["multiprocessing"]
+allowed_importers = ["sift.ingest.sandbox"]
+
+[[tool.importlinter.contracts]]
+name = "Settings only in interfaces: the core and the use cases take values"
+type = "forbidden"
+source_modules = ["sift.api", "sift.domain", "sift.storage", "sift.retrieval", "sift.ingest", "sift.inference", "sift.app"]
+forbidden_modules = ["sift.settings"]
+
+[[tool.importlinter.contracts]]
+name = "Servers, templates and argument parsing only in interfaces"
+type = "forbidden"
+source_modules = ["sift.api", "sift.domain", "sift.storage", "sift.retrieval", "sift.ingest", "sift.inference", "sift.app"]
+forbidden_modules = ["argparse", "jinja2", "mcp", "starlette", "uvicorn"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-filterwarnings = ["error"]  # a warning today is a failure tomorrow
-faulthandler_timeout = 300  # seconds after which a test that hangs says where: every thread's stack, on stderr
+pythonpath = ["."]
+addopts = ["--strict-markers", "--strict-config", "--import-mode=importlib"]
+filterwarnings = [
+    "error",
+    # PyTorch says this of a virtual Mac's GPU, as CI's runners have, when a test imports the model libraries; sift
+    # itself keeps it from its users (sift.inference.loading).
+    "ignore:Skipping device:UserWarning",
+]
+timeout = 300
+xfail_strict = true
 
 [tool.coverage.run]
-source = ["sift"]
+source = ["sift", "tools"]
 branch = true
+patch = ["subprocess"]
 
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
 skip_covered = true
-exclude_also = ["@njit", "@intrinsic"]  # compiled by Numba (sift/scan.py): Python never runs their bodies
 
 [tool.codespell]
-ignore-words-list = "pard,ue"  # an RTF control word, in tests/samples/make_samples.py; ü written as ue
+ignore-words-list = "ue"

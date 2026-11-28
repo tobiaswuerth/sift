@@ -8,113 +8,121 @@ go to [SECURITY.md](SECURITY.md).
 ```bash
 git clone https://github.com/tobiaswuerth/sift
 cd sift
-uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or: pip install -r requirements.txt -e ".[dev]"
-source .venv/bin/activate   # on Windows: .venv\Scripts\activate
-pre-commit install      # lint, format and config checks on every commit
-python scripts/gate.py  # the gate: every check a change must pass (see "How changes are made")
+uv sync
+uv run pre-commit install
 ```
 
-The tests replace the models, GPU memory and the clock with small deterministic fakes, so they need no GPU and no
-downloads; everything else, the MCP server included, runs for real.
+A Rust extension, the crate in `native/`, builds, merges and searches the lists of the keyword index and clusters the
+passages into their topical order. Install [rustup](https://rustup.rs) and a C compiler first: `uv sync` builds the
+extension, and builds it again whenever the crate changed. `rust-toolchain.toml` names the toolchain, which rustup
+fetches on the first build. Every package carries the licences of the crates built into the extension, in
+`native/THIRD-PARTY-NOTICES`: after a change of the crate's dependencies, `python -m tools notices --write` regenerates
+that file.
 
-## Code layout
+## The gate
 
-| Module | What it does |
-|---|---|
-| `cli.py` | The `sift` command |
-| `catalog.py` | The catalog: collections, their folders, where their stores lie, which are active; adding, removing, moving |
-| `store.py` | A collection's store, its SQLite file: layout, ids, codes, the last parts of paths, deleting documents, holding it alone |
-| `upgrade.py` | Splitting an index of sift 1.7 or older into a store per collection |
-| `readers.py` | Files into documents: a reader per kind of file, chunking, and the links of Markdown notes |
-| `indexing.py` | `sift index`: scanning folders, reading changed files in worker processes; `reindex` of given files |
-| `processes.py` | The worker processes sift starts: how many the machine gives, and the pools of them |
-| `ocr.py` | Reading scans: a PDF's pages as pictures, read by an OCR model, once per scan |
-| `ignore.py` | `.siftignore`: gitignore patterns, matched in linear time |
-| `links.py` | Links between notes: the names files answer to, resolving links, backlinks |
-| `search.py` | Keyword, semantic and hybrid search, documents like a document, `get`, links, mentions and `reindex` |
-| `filters.py` | Conditions on front matter as SQL: how a filter's value compares with a document's, in each form |
-| `hits.py` | What a search hands back: its options checked, its hits ordered, one per work, cut to those that stand out |
-| `queries.py` | A query as text: its words as FTS5 phrases, any of them; what the reranker reads, how its scores blend |
-| `expression.py` | Keyword queries (words, phrases, AND, OR, NOT, parentheses) as FTS5 reads them, for the postings |
-| `postings.py` | Keyword search's own postings in a topical order; deltas, merges and rebuilds as FTS5 changes |
-| `order.py` | The topical order of a collection's chunks, by binary k-means of their codes |
-| `topk.py` | The best documents for a keyword query from the postings, by Block-Max Pruning, until a deadline if given |
-| `bench.py` | `sift bench`: nDCG@10, MRR@10 and Recall@10 of each search mode |
-| `embed.py` | `sift embed`: embedding every chunk without a vector |
-| `models.py` | The `Models` interface, and `default()`: the models this process uses |
-| `local.py` | `Local`: this machine's embedding model and reranker |
-| `remote.py` | `Remote`: a `sift worker` on another machine, used like `Local` |
-| `accelerator.py` | `Accelerator`: the device, its memory budget, batch sizes, what is on the GPU when |
-| `vectors.py` | The codes in RAM: candidates by Hamming distance, ranked by the query's floats, scored exactly; filters |
-| `scan.py` | The Hamming scan compiled by Numba, for a server's large collections |
-| `server.py` | `sift serve`: the MCP server, and the UI under /ui |
-| `jobs.py` | A server's calls off its event loop, one at a time, stopped when cancelled; the models on the main thread |
-| `ui.py` | `sift ui`: the browser UI's views; `web/` holds its templates, styles, script and htmx 2.0.11 (0BSD) |
-| `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
-| `update.py` | A newer sift on PyPI: asking once a day, offering it in a terminal, updating once no sift runs |
-| `settings.py` | The environment variables, read once (`settings.current()`), and the commit each default model is pinned to |
-| `console.py` | What sift tells the user on stderr: messages, plurals, commands to paste, one progress bar |
-| `logs.py` | A log for each command that changes the index or serves it |
+```bash
+uv run --only-group gate nox
+```
 
-Rules the code keeps, several checked by `tests/test_package.py`:
+It runs every check a change must pass and stops at the first that fails: `lint`
+(pre-commit hooks, `cargo fmt` and clippy on the crate, the licence notices of its crates, and import contracts; it
+refuses files git neither tracks nor ignores), `types` (basedpyright for
+Linux, macOS and Windows, each as Python 3.12 and 3.15), `tests-3.12` and `tests-3.15` (100% line and branch
+coverage of `sift` and `tools`), `lowest` (the lowest versions sift allows, installed afresh on each run, and
+`python -m tools floors` holds each to the version `pyproject.toml` names), `kernel` (the crate's own tests and the
+tests of Python that reach it, with every line of the crate run by one of them), `package` (the wheel and sdist hold
+the tracked sources and nothing else, and the installed commands run). One session:
+`uv run --only-group gate nox -s types`. CI runs these sessions too, the tests on every Python from 3.12 to 3.15
+on Linux (x86 and ARM), macOS and Windows, which no local run covers, and on Python 3.12.0 itself, uv's own build
+of it (`nox -s oldest`). CI also builds the wheels a release would publish, one for each of those platforms, as the
+release builds them (`.github/workflows/wheels.yml`). Every session installs its packages on its first run (`kernel`
+its coverage tool and the crates too), `lowest` and `package` on each run, so those two always need the network. No
+session runs the lowest SQLite sift allows, 3.38: every Python build brings a newer one. On Windows, turn on
+Developer Mode first: without the right to make symbolic links the tests of linked files are skipped, and the lines
+only they run fail the coverage check.
 
-- Search and embedding take a `Models` object, `Local` or `Remote`, and never ask where the models run. Only
-  `accelerator.py` imports PyTorch at the top, so a machine searching through a worker never loads it.
-- Only `settings.py` reads or sets the environment.
-- Results go to stdout from `cli.py` alone; everything else goes to stderr through `console.py`, so output can be piped.
-- Tests build objects around fakes instead of patching module state, and change settings with the `configure` fixture.
-  Each test has a SIFT_HOME of its own, the `home` fixture's, which the processes it starts share, and sift's
-  defaults for every other setting, whatever the shell that runs it holds. It sees every folder listed last name
-  first, on every system: file systems list in orders of their own, which no test may count on.
+Before a release, `nox -s explore` runs the property tests with fresh random examples, 2,000 each, and 200 at least for
+those that build stores (`few` in `tests/examples.py`); the gate runs them derandomized. And `nox -s real` runs the
+default models, from the Hugging Face cache or downloaded: it indexes a few notes and a scan with OCR, embeds them and
+searches them three ways, and on a CUDA GPU checks that the models rest and come back. Its session has CPU PyTorch; for
+the GPU, run `python -m tests.real_models` where PyTorch has CUDA. Tests run on at most 8 workers: each worker imports
+every test module, the model libraries among them, and on 32 threads more workers made the suite slower (35 s on 8, 101
+s on 32).
+
+## Where things are
+
+`src/sift` in layers, each importing only those after it; [architecture.md](architecture.md) says what they do.
+
+- `interfaces`: what talks to the outside. `cli` (the commands and what they print), `mcp` (the agents' tools),
+  `server` (the home process: its gate, jobs and routes), `web` (the UI's pages), `worker` (a GPU lent to other
+  machines), `console` (colour, progress), and `acts`: the one table of what sift can do, which all of them call.
+- `app`: the use cases, one module each: index, embed, search, query, links, import, move.
+- `retrieval`: keyword search over the stored postings and vector search over the codes. `ingest`: listing a
+  folder and reading its files, the readers' processes among them.
+- `storage`: all SQL: the catalog, a collection's store and its layout, the keyword index, the vectors, the lock
+  of the one writer. `inference`: the models, where they run, and the worker's client.
+- `domain`: what needs no I/O: passages, tokens, the query grammar, the postings' and codes' formats, ranking.
+- `api`: the requests and answers every interface speaks, the errors with their codes, and their JSON.
+
+`sift.settings` reads the environment; `sift.late` loads a module when it is first needed, so that a command
+starts without the model libraries.
+
+## Rules the checks hold
+
+- No comments and no docstrings: names, types, tests and structure carry the meaning (`python -m tools prose`).
+  An exception needs a maintainer's approval and an entry in `tools/prose_allowed.toml`.
+- `sift.api` and `sift.domain` hold pure functions and immutable values: no I/O, no result of a call left unused.
+  Module-level values are immutable everywhere; no module has more than 400 lines, no class more than 10 methods
+  (`python -m tools shape`, the import contracts, basedpyright).
+- Every name of sift is used in sift, and no function is written twice, in sift, its tools or its tests: what two
+  places need is kept where both can import it (`python -m tools dead`, `python -m tools twins`).
+- Packages import only those below them: interfaces, app, retrieval and ingest, storage and inference, domain, api.
+  No module imports one that imports it (`[tool.importlinter]` in `pyproject.toml`).
+- SQLite, the model libraries, the document converter and worker processes are each imported only in their own module
+  (the import contracts).
+- sift imports only packages `pyproject.toml` depends on, and the stubs in `typings/` name only what their packages
+  have (`python -m tools imports`, `python -m tools stubs`, which the lint session runs where sift is installed).
+- Tests pass fakes and values in; `monkeypatch` is not used, and no test reads a clock: what costs time is counted
+  (`python -m tools idioms`, which also holds lessons of earlier bugs: each of its findings names the fix).
+- sift reads its environment only in `sift.settings`, and only `sift.interfaces` imports that module: the use cases and
+  the core take values (`python -m tools idioms`, the import contracts).
+- A character that shows as nothing, or as another, is written as an escape (`"\N{ZERO WIDTH SPACE}"`), never as
+  itself (`python -m tools idioms`).
+- The tokenizer's table is generated from SQLite's FTS5 (`python -m tools fts5 --write`), and a test checks that it
+  matches.
+- Stores need SQLite 3.38 or newer (STRICT tables, the JSON functions built in); an older one is refused with what to
+  do. A store's layout changes by a numbered migration appended to `LAYOUT`, never by editing one a release has shipped.
+  Each migration says what a sift that does not know it may still do with the store (`Older`): nothing, which is the
+  default; read it; or read and write it, as when an index is added. The store records the answer, and an older sift
+  goes by it. A change of the keyword index's bytes or of the tokenizer's table raises `FORMAT`: an older sift then
+  refuses that index and says to upgrade, where it would otherwise rebuild it in its own format.
+- Published text names no machine's model, and prose is wrapped as the code is (`python -m tools text`).
+- A bound is a module constant named `MOST_*`, `FEWEST_*`, `LEAST_*`, `*_SECONDS`, `*_BYTES` or `*_LENGTH`, or a field
+  of a class named so in lower case, beside what it bounds; [limits.md](limits.md) lists them all, regenerated by
+  `python -m tools limits --write`, and a test checks that it matches the code.
+- No check is silenced. A suppression needs a maintainer's approval and is scoped to one rule in one place.
 
 ## How changes are made
 
-- **Tests first:** a test that fails, then the change that makes it pass; every bug fix comes with a regression test.
-- **Full coverage:** `pytest --cov` requires 100% line and branch coverage.
-- **The gate:** `python scripts/gate.py` runs every check a change must pass, and is green when all did: the
-  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run. It checks its own checkout,
-  from whichever folder it runs, and first that its Python imports that checkout's sift and that git tracks or
-  ignores every file there, since the hooks check only those git tracks. With uv on the PATH, it then builds and
-  checks the package as CI's package job does (`scripts/package.py`: the changelog's section, the build from the files
-  a clone holds with its backend by hash, twine, what the sdist holds, the wheel in a clean environment); runs the
-  tests once more on the newest Python CI tests on, where a Python warns of what an older one lets pass, in
-  `.venv-newest`, an environment the gate makes, keeps up to date and owns (delete it at will); and runs them with the
-  lowest versions sift names of what it depends on, on the oldest Python, as CI's lowest job does, in an environment
-  made afresh in a temporary folder, where `scripts/floors.py` first holds each version named to the one installed.
-  CI itself runs the oldest and the newest Python first, and every other system and Python once those pass.
-- **Types:** [pyright](https://github.com/microsoft/pyright) checks all of `sift/` in its strict mode, as on Linux,
-  macOS and Windows each, whichever runs it: `pyright --pythonplatform Linux` (`Darwin`, `Windows`), in the activated
-  environment. It checks for the Python of CI's types job, whose packages it reads (NumPy's types name what only that
-  Python has); that sift runs on the oldest Python it claims, ruff's target and CI's tests there hold. A package that
-  ships no types gets a stub in `typings/` of what sift calls of it; one whose types don't fit is reached through a
-  Protocol of what sift uses. No finding is silenced by a setting, and by a comment only with the owner's yes, for
-  one rule on one line, which `tests/test_package.py` lists.
-- **Quality gates:** pre-commit runs on every commit and in CI: ruff (lint and format), whitespace, line endings, byte
-  order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint, codespell, and
-  [zizmor](https://docs.zizmor.sh), which reads the workflows for what makes them unsafe. Workflows name their
-  actions by commit, which a test holds them to. Once a week, the Audit workflow checks the packages sift installs
-  that day, and those of the lowest versions it names, against the advisories known for them (`pip-audit`); one
-  against a lowest version is fixed by raising it. Dependabot proposes a new release once it is a week old.
-- **The smoke run:** `python scripts/smoke.py` runs every command as a user runs it, each in a process of its own, on
-  a small folder of notes; with `--models` also what loads the models: `embed`, the semantic searches, `bench` and
-  `sift serve` with its page and MCP endpoint. A new command or option gets a line there.
-- **Pull requests:** `main` is protected; pull requests are squash-merged once every check passes. CI runs the hooks,
-  the type checker, the tests and the smoke run on Linux (x86 and ARM), macOS and Windows for Python 3.11 to 3.15,
-  tests the lowest versions sift names on Python 3.11, and builds the package, on pull requests and again on each
-  merge commit. Its check `tests` passes when every job of that matrix did, and that of the lowest versions.
-- **Changelog:** user-visible changes go under "Unreleased" in [CHANGELOG.md](../CHANGELOG.md).
-- **Measurements** in docs state the hardware by kind (a GPU, 8 CPU threads), not by model, and leave out what else
-  ran on the machine.
+- A failing test of the behaviour first, through public functions; then the change.
+- User-visible changes go under "Unreleased" in [CHANGELOG.md](../CHANGELOG.md).
+- Measurements in docs state the hardware by kind (a GPU, 8 CPU threads), not by model.
 
 ## Releasing
 
-1. In a pull request, set the version in `sift/__init__.py` and move the "Unreleased" changes in `CHANGELOG.md` under
-   it, with its compare link at the bottom; CI checks the changelog has that section. Run
-   `python scripts/smoke.py --models` on it once: CI's smoke run loads no model. And run the Audit workflow on its
-   branch (`gh workflow run audit.yml --ref BRANCH`): an advisory against a lowest version sift names is fixed in the
-   release, not found the Monday after it.
-2. Merge it. Once CI passes on the merge commit, the release workflow publishes that commit: it builds the package,
-   publishes it to PyPI by trusted publishing (no tokens; the `pypi` environment deploys from `main` only), tags the
-   commit and creates a GitHub release with that version's changelog. It never runs for a failed CI run. If a job
-   fails after PyPI took the package, re-run the failed jobs only: PyPI takes no version twice, so a run from the
-   start, or one for a later commit of the same version, fails at publishing.
+Set the version in `pyproject.toml` and move the "Unreleased" changes under `## [VERSION] - YYYY-MM-DD`, dated the
+day of the release, in a pull request: the release workflow refuses a version without that section, or with an empty
+one, before it builds anything (`python -m tools release notes VERSION` prints what it would publish). Once CI passes
+on its merge commit, the release workflow builds the sources and a wheel for each platform from that commit (Linux's
+in a manylinux image, so that they run where glibc is 2.28 or newer), publishes them to PyPI by trusted publishing
+only when the set is whole (`python -m tools release files FOLDER`), tags the commit and creates the GitHub release,
+marked a pre-release for a, b, rc and dev versions. If a job fails after PyPI took the package, re-run only the
+failed jobs.
+
+Dependabot moves the packages, the crates, the actions and the hooks, each to a release a week old. It reads neither
+the manylinux images nor rustup's checksums in the wheels workflow: the weekly audit fails once a release of those a
+week old is newer than the one pinned, and names what to set (`python -m tools pins`). Nothing tells of newer
+releases of the rest, which are moved by hand: the Rust toolchain in `rust-toolchain.toml`, the uv of the
+workflows (setup-uv's `version`), pip-audit and cargo-audit in the audit workflow, and twine and cargo-llvm-cov in
+`noxfile.py` and the wheels workflow.

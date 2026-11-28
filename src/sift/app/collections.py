@@ -1,0 +1,169 @@
+from collections.abc import Callable, Sequence
+from contextlib import nullcontext
+from dataclasses import replace
+from pathlib import Path
+
+from sift.api.collections import (
+    ActivateCollections,
+    AddCollection,
+    Audience,
+    CollectionAdded,
+    CollectionChanged,
+    CollectionRemoved,
+    CollectionsSwitched,
+    CollectionStatus,
+    Counted,
+    DeactivateCollections,
+    RemoveCollection,
+    ShowStatus,
+    Status,
+    TitleFrom,
+    Unavailable,
+    UnreadableFile,
+)
+from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError, field_at_fault
+from sift.api.events import Reporter
+from sift.api.notices import Notice, notice_of
+from sift.app.choosing import changed
+from sift.app.loading import unreported
+from sift.app.notes import unresolved_links
+from sift.app.paths import absolute
+from sift.domain.text.records import Chosen
+from sift.storage.catalog import (
+    Choices,
+    Collection,
+    NewCollection,
+    add_collection,
+    all_named,
+    catalog_of,
+    forget_collection,
+    holding_folder,
+    known_collections,
+    known_to,
+    named,
+    paid,
+    refuse_inactive,
+    set_active,
+)
+from sift.storage.database import reading
+from sift.storage.documents import counts, fields_sampled, unreadable
+from sift.storage.links import links_held
+from sift.storage.store import connected, read_store, refuse_read_only
+from sift.storage.store_files import store_files_left, stored_bytes, unlinked
+from sift.storage.vector_meta import left, model_of
+from sift.storage.writer import sole_writer
+
+OBSIDIAN = ".obsidian"
+FIELD_REMEDY = "name the field, e.g. abstract"
+NONE_ACTIVE_REMEDY = "activate a collection by its name"
+SEARCHED = "collections"
+
+
+def _field(name: str | None, field: str) -> str | None:
+    if name is not None and not name.strip():
+        raise InvalidRequestError("names no field", FIELD_REMEDY, field)
+    return name
+
+
+def add(home: Path, request: AddCollection, report: Reporter = unreported) -> CollectionAdded | CollectionChanged:
+    folder = absolute(request.folder, "folder")
+    again = holding_folder(home, folder)
+    if again is not None:
+        return changed(home, again, request, report)
+    vault = (folder / OBSIDIAN).is_dir()
+    title_from = request.title_from or (TitleFrom.NAME if vault else TitleFrom.HEADING)
+    records = Chosen(_field(request.id_field, "id_field"), _field(request.title_field, "title_field"))
+    records = replace(records, text=tuple(_field(each, "text_fields") or "" for each in request.text_fields))
+    follow_links, agents = request.follow_links is True, request.agents is not False
+    new = NewCollection(
+        folder,
+        request.name,
+        None if request.store is None else absolute(request.store, "store"),
+        nested=request.nested,
+        choices=Choices(title_from, follow_links=follow_links, records=records, agents=agents),
+    )
+    with catalog_of(home) as catalog:
+        added = add_collection(catalog, home, new)
+    return CollectionAdded(
+        added.name, str(added.folder), str(added.store), title_from, vault, follow_links=follow_links, agents=agents
+    )
+
+
+def chosen(home: Path, names: Sequence[str], audience: Audience, field: str = "names") -> tuple[Collection, ...]:
+    known = known_to(home, audience)
+    with field_at_fault(field):
+        return all_named(known, names) if names else known
+
+
+def chosen_or_active(home: Path, names: Sequence[str], audience: Audience) -> tuple[Collection, ...]:
+    return chosen(home, names, audience) if names else tuple(one for one in chosen(home, (), audience) if one.active)
+
+
+def searchable(home: Path, names: Sequence[str], audience: Audience) -> tuple[Collection, ...]:
+    if names:
+        with field_at_fault(SEARCHED):
+            return tuple(map(refuse_inactive, chosen(home, names, audience, SEARCHED)))
+    known = chosen(home, (), audience)
+    active = tuple(one for one in known if one.active)
+    if known and not active:
+        raise InvalidRequestError("no collection is active", NONE_ACTIVE_REMEDY, code=Problem.INACTIVE_COLLECTION)
+    return active
+
+
+def _held(one: Collection) -> tuple[int | None, Notice | None]:
+    try:
+        with connected(one.store, one.id) as connection, reading(connection) as transaction:
+            return counts(transaction).documents, None
+    except StoreUnavailableError as error:
+        return None, notice_of(error)
+
+
+def remove(home: Path, request: RemoveCollection, unlink: Callable[[Path], None] = unlinked) -> CollectionRemoved:
+    with field_at_fault("name"):
+        one = named(known_collections(home), request.name)
+    refuse_read_only(one.store)
+    with sole_writer(one.store, "a removal") if one.store.parent.is_dir() else nullcontext():
+        documents, problem = _held(one)
+        forget_collection(home, one.id)
+    left = tuple(str(file) for file in store_files_left(one.store, unlink))
+    if not left:
+        paid(home, one.store)
+    return CollectionRemoved(one.name, str(one.store), documents, problem, left)
+
+
+def _switched(home: Path, names: Sequence[str], *, active: bool) -> CollectionsSwitched:
+    switched = set_active(home, names, active=active)
+    changed = tuple(one.name for one in switched if one.active != active)
+    return CollectionsSwitched(active, changed, tuple(one.name for one in switched if one.active == active))
+
+
+def activate(home: Path, request: ActivateCollections) -> CollectionsSwitched:
+    return _switched(home, request.names, active=True)
+
+
+def deactivate(home: Path, request: DeactivateCollections) -> CollectionsSwitched:
+    return _switched(home, request.names, active=False)
+
+
+def _contents(one: Collection, *, listed: bool) -> Counted | Unavailable:
+    try:
+        with read_store(one.store, one.id) as transaction:
+            kept, failed = counts(transaction), unreadable(transaction)
+            linked, gone = links_held(transaction), len(unresolved_links(transaction))
+            waiting, model, fields = left(transaction), model_of(transaction), fields_sampled(transaction)
+    except StoreUnavailableError as error:
+        return Unavailable(error.code, error.message, error.remedy)
+    files = tuple(UnreadableFile(entry.path, entry.problem) for entry in failed) if listed else ()
+    size, embedded = stored_bytes(one.store), kept.chunks - waiting
+    held = Counted(kept.documents, kept.chunks, size, len(failed), files, linked, gone)
+    return replace(held, embedded=embedded, model=model, fields=fields)
+
+
+def _status(one: Collection, *, listed: bool) -> CollectionStatus:
+    contents = _contents(one, listed=listed)
+    return CollectionStatus(one.name, str(one.folder), str(one.store), contents, one.active, one.choices.agents)
+
+
+def status(home: Path, request: ShowStatus, *, audience: Audience = Audience.PEOPLE) -> Status:
+    found = chosen(home, request.names, audience)
+    return Status(str(home), tuple(_status(one, listed=request.unreadable) for one in found))

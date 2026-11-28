@@ -1,0 +1,986 @@
+{
+  "answers": {
+    "add": {
+      "name": "notes",
+      "folder": "/data/notes",
+      "store": "/home/.sift/collections/notes.sqlite",
+      "title_from": "heading",
+      "vault": true,
+      "follow_links": false,
+      "agents": true,
+      "state": "added"
+    },
+    "add again": {
+      "name": "notes",
+      "title_from": "name",
+      "follow_links": true,
+      "agents": false,
+      "retitled": 2,
+      "to_embed": 1,
+      "index_again": true,
+      "state": "changed"
+    },
+    "rm": {
+      "name": "diary",
+      "store": "/home/.sift/collections/diary.sqlite",
+      "documents": 3,
+      "problem": null,
+      "left": [
+        "/s/diary.sqlite-wal"
+      ]
+    },
+    "rm unread": {
+      "name": "diary",
+      "store": "/home/.sift/collections/diary.sqlite",
+      "documents": null,
+      "problem": {
+        "code": "store_damaged",
+        "message": "it is damaged",
+        "remedy": "move it",
+        "collection": null,
+        "id": null
+      },
+      "left": []
+    },
+    "move": {
+      "moved": [
+        {
+          "name": "diary",
+          "old": "/s/diary.sqlite",
+          "new": "/t/diary.sqlite",
+          "copied": true,
+          "left": [
+            "/s/diary.sqlite-shm"
+          ]
+        }
+      ],
+      "already": [
+        "notes"
+      ]
+    },
+    "activate": {
+      "active": true,
+      "changed": [
+        "diary"
+      ],
+      "already": []
+    },
+    "deactivate": {
+      "active": false,
+      "changed": [
+        "diary"
+      ],
+      "already": [
+        "notes"
+      ]
+    },
+    "status": {
+      "home": "/home/.sift",
+      "collections": [
+        {
+          "name": "notes",
+          "folder": "/data/notes",
+          "store": "/home/.sift/collections/notes.sqlite",
+          "contents": {
+            "documents": 3,
+            "chunks": 7,
+            "stored_bytes": 4096,
+            "unreadable": 1,
+            "unreadable_files": [
+              {
+                "path": "bad.pdf",
+                "problem": "no text"
+              }
+            ],
+            "links": 2,
+            "unresolved": 1,
+            "embedded": 5,
+            "model": "a-model",
+            "fields": [
+              "year"
+            ],
+            "state": "counted"
+          },
+          "active": true,
+          "agents": true
+        },
+        {
+          "name": "papers",
+          "folder": "/data/papers",
+          "store": "/home/.sift/collections/papers.sqlite",
+          "contents": {
+            "code": "store_missing",
+            "message": "gone",
+            "remedy": "add it",
+            "collection": null,
+            "id": null,
+            "state": "unavailable"
+          },
+          "active": false,
+          "agents": true
+        }
+      ]
+    },
+    "index": {
+      "collections": [
+        {
+          "name": "notes",
+          "outcome": {
+            "files": 3,
+            "added": 1,
+            "changed": 1,
+            "removed": 0,
+            "unreadable": 1,
+            "state": "indexed"
+          },
+          "named": []
+        },
+        {
+          "name": "papers",
+          "outcome": {
+            "code": "folder_missing",
+            "message": "gone",
+            "remedy": "add it",
+            "collection": null,
+            "id": null,
+            "state": "skipped"
+          },
+          "named": []
+        }
+      ]
+    },
+    "index files": {
+      "collections": [
+        {
+          "name": "notes",
+          "outcome": {
+            "files": 2,
+            "added": 0,
+            "changed": 1,
+            "removed": 0,
+            "unreadable": 1,
+            "state": "indexed"
+          },
+          "named": [
+            {
+              "id": "notes/rl.md",
+              "state": "changed",
+              "note": null,
+              "code": null
+            },
+            {
+              "id": "notes/scan.pdf",
+              "state": "unreadable",
+              "note": "no text",
+              "code": null
+            },
+            {
+              "id": "notes/locked.md",
+              "state": "unreadable",
+              "note": "Access is denied",
+              "code": "os"
+            }
+          ]
+        }
+      ]
+    },
+    "embed": {
+      "collections": [
+        {
+          "name": "notes",
+          "outcome": {
+            "stored": 7,
+            "broken": 0,
+            "state": "embedded"
+          }
+        },
+        {
+          "name": "papers",
+          "outcome": {
+            "code": "store_missing",
+            "message": "gone",
+            "remedy": "add it",
+            "collection": null,
+            "id": null,
+            "state": "skipped"
+          }
+        }
+      ]
+    },
+    "get": {
+      "found": [
+        {
+          "id": "notes/a.md",
+          "title": "A",
+          "text": "# A\n",
+          "fields": {
+            "year": 2024
+          },
+          "first_line": 1,
+          "lines": 0
+        }
+      ],
+      "not_read": [
+        {
+          "code": "unknown_document",
+          "message": "no note or document 'notes/b.md'",
+          "remedy": "take the id from a search result",
+          "collection": null,
+          "id": "notes/b.md"
+        }
+      ]
+    },
+    "search": {
+      "hits": [
+        {
+          "id": "notes/a.md",
+          "collection": "notes",
+          "path": "a.md",
+          "title": "A",
+          "first_line": 1,
+          "last_line": 2,
+          "score": 1.5,
+          "text": "# A",
+          "also": [
+            "copy/a.md"
+          ],
+          "fields": {
+            "year": 2024
+          }
+        }
+      ],
+      "searched": 1,
+      "unsearched": [
+        {
+          "code": "busy",
+          "message": "the store is busy",
+          "remedy": "wait, then ask again",
+          "collection": "papers",
+          "id": null
+        }
+      ],
+      "partial": true,
+      "ruled_out": 1,
+      "left_out": [
+        {
+          "code": "not_embedded",
+          "message": "1 document has no vectors: searched by keyword alone",
+          "remedy": null,
+          "collection": "notes",
+          "id": null
+        }
+      ],
+      "more": true,
+      "loosened": true,
+      "scored_by": "keywords"
+    },
+    "links": {
+      "id": "notes/a.md",
+      "title": "A",
+      "out": [
+        {
+          "line": 3,
+          "target": "B",
+          "field": "org",
+          "fragment": "Intro",
+          "via": "name",
+          "id": "notes/b.md",
+          "title": "B",
+          "ambiguous": [],
+          "through": null
+        }
+      ],
+      "into": [
+        {
+          "id": "notes/c.md",
+          "title": "C",
+          "lines": [
+            {
+              "line": 4,
+              "field": null,
+              "text": "see [[A]]"
+            }
+          ],
+          "through": null
+        }
+      ],
+      "unsearched": [
+        {
+          "code": "busy",
+          "message": "the store is busy",
+          "remedy": "wait, then ask again",
+          "collection": "papers",
+          "id": null
+        }
+      ],
+      "more": true
+    },
+    "unresolved": {
+      "targets": [
+        {
+          "target": "Missing",
+          "documents": 2,
+          "ids": [
+            "notes/a.md",
+            "notes/c.md"
+          ]
+        }
+      ],
+      "unsearched": [
+        {
+          "code": "busy",
+          "message": "the store is busy",
+          "remedy": "wait, then ask again",
+          "collection": "papers",
+          "id": null
+        }
+      ],
+      "more": true
+    },
+    "serve": {
+      "url": "http://127.0.0.1:8765"
+    },
+    "bench": {
+      "cases": 2,
+      "modes": [
+        {
+          "mode": "search",
+          "ndcg": 0.5,
+          "mrr": 0.75,
+          "recall": 1.0,
+          "ms_per_query": 12.5
+        },
+        {
+          "mode": "query",
+          "ndcg": 1.0,
+          "mrr": 1.0,
+          "recall": 1.0,
+          "ms_per_query": 250.0
+        }
+      ]
+    },
+    "import": {
+      "home": "/home/.sift",
+      "collections": [
+        {
+          "name": "notes",
+          "outcome": {
+            "store": "/home/.sift/collections/notes-v2.sqlite",
+            "documents_before": 2,
+            "documents": 2,
+            "passages_before": 5,
+            "passages": 5,
+            "vectors_before": 5,
+            "vectors": 4,
+            "model": "a/model@0",
+            "state": "imported"
+          }
+        },
+        {
+          "name": "gone",
+          "outcome": {
+            "code": "folder_missing",
+            "message": "its folder is missing: /gone",
+            "remedy": "add it again",
+            "collection": null,
+            "id": null,
+            "state": "skipped"
+          }
+        }
+      ]
+    }
+  },
+  "requests": {
+    "add": {
+      "folder": "/data/notes",
+      "name": "notes",
+      "store": "/data/notes.sqlite",
+      "title_from": "name",
+      "nested": true,
+      "follow_links": true,
+      "agents": false,
+      "id_field": "key",
+      "title_field": "title",
+      "text_fields": [
+        "body"
+      ]
+    },
+    "rm": {
+      "name": "diary"
+    },
+    "move": {
+      "names": [
+        "diary"
+      ],
+      "to": "/data/stores"
+    },
+    "activate": {
+      "names": [
+        "diary"
+      ]
+    },
+    "deactivate": {
+      "names": [
+        "diary"
+      ]
+    },
+    "index": {
+      "names": [
+        "notes"
+      ],
+      "files": [
+        "notes/a.md"
+      ]
+    },
+    "embed": {
+      "names": [
+        "notes"
+      ],
+      "reset": true
+    },
+    "status": {
+      "names": [
+        "notes"
+      ],
+      "unreadable": true
+    },
+    "get": {
+      "documents": [
+        {
+          "id": "notes/a.md",
+          "first_line": 2,
+          "last_line": 4
+        }
+      ],
+      "fields": [
+        "url"
+      ]
+    },
+    "search": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "query": "halo"
+    },
+    "vsearch": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "query": "dark matter"
+    },
+    "query": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "query": "dark matter",
+      "candidates": 60
+    },
+    "mentions": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "id": "notes/Alice.md",
+      "also": [
+        "emails"
+      ]
+    },
+    "similar": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "id": "notes/a.md"
+    },
+    "links": {
+      "id": "notes/a.md",
+      "direction": "both",
+      "depth": 2,
+      "field": "related",
+      "k": 20
+    },
+    "unresolved": {
+      "collections": [
+        "notes"
+      ],
+      "k": 20
+    },
+    "jobs": {
+      "stop": 3
+    }
+  },
+  "errors": {
+    "invalid_request of a field": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "invalid_request",
+        "message": "k is 0, outside 1 to 10,000",
+        "remedy": "give 1 to 10,000",
+        "field": "k"
+      }
+    },
+    "unknown_collection of a field": {
+      "error": {
+        "kind": "not_found",
+        "code": "unknown_collection",
+        "message": "no collection is named 'x'",
+        "remedy": "the collections are: notes",
+        "field": "collections"
+      }
+    },
+    "invalid_request": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "invalid_request",
+        "message": "a refusal coded invalid_request",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "ambiguous": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "ambiguous",
+        "message": "a refusal coded ambiguous",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "taken": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "taken",
+        "message": "a refusal coded taken",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "too_many_words": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "too_many_words",
+        "message": "a refusal coded too_many_words",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "widened_enough": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "widened_enough",
+        "message": "a refusal coded widened_enough",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "field_not_held": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "field_not_held",
+        "message": "a refusal coded field_not_held",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "not_found": {
+      "error": {
+        "kind": "not_found",
+        "code": "not_found",
+        "message": "a refusal coded not_found",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "folder_missing": {
+      "error": {
+        "kind": "not_found",
+        "code": "folder_missing",
+        "message": "a refusal coded folder_missing",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "unknown_collection": {
+      "error": {
+        "kind": "not_found",
+        "code": "unknown_collection",
+        "message": "a refusal coded unknown_collection",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "unknown_document": {
+      "error": {
+        "kind": "not_found",
+        "code": "unknown_document",
+        "message": "a refusal coded unknown_document",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "unknown_note": {
+      "error": {
+        "kind": "not_found",
+        "code": "unknown_note",
+        "message": "a refusal coded unknown_note",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "inactive_collection": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "inactive_collection",
+        "message": "a refusal coded inactive_collection",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "store_unavailable": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "store_unavailable",
+        "message": "a refusal coded store_unavailable",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "store_missing": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "store_missing",
+        "message": "a refusal coded store_missing",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "store_damaged": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "store_damaged",
+        "message": "a refusal coded store_damaged",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "catalog_damaged": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "catalog_damaged",
+        "message": "a refusal coded catalog_damaged",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "store_newer": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "store_newer",
+        "message": "a refusal coded store_newer",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "sqlite_too_old": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "sqlite_too_old",
+        "message": "a refusal coded sqlite_too_old",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "keywords_remade": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "keywords_remade",
+        "message": "a refusal coded keywords_remade",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "not_embedded": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "not_embedded",
+        "message": "a refusal coded not_embedded",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "other_model": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "other_model",
+        "message": "a refusal coded other_model",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "out_of_time": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "out_of_time",
+        "message": "a refusal coded out_of_time",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "busy": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "busy",
+        "message": "a refusal coded busy",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "model_unavailable": {
+      "error": {
+        "kind": "model_unavailable",
+        "code": "model_unavailable",
+        "message": "a refusal coded model_unavailable",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "unauthorized": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "unauthorized",
+        "message": "a refusal coded unauthorized",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "os": {
+      "error": {
+        "kind": "os",
+        "code": "os",
+        "message": "a refusal coded os",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "stopped": {
+      "error": {
+        "kind": "stopped",
+        "code": "stopped",
+        "message": "a refusal coded stopped",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "internal": {
+      "error": {
+        "kind": "internal",
+        "code": "internal",
+        "message": "a refusal coded internal",
+        "remedy": "what to do",
+        "field": null
+      }
+    }
+  },
+  "events": {
+    "collection started": {
+      "event": "CollectionStarted",
+      "data": {
+        "name": "notes",
+        "folder": "/data/notes"
+      }
+    },
+    "phase started": {
+      "event": "PhaseStarted",
+      "data": {
+        "phase": "read",
+        "total": 3
+      }
+    },
+    "advanced": {
+      "event": "Advanced",
+      "data": {
+        "done": 2
+      }
+    },
+    "files kept": {
+      "event": "FilesKept",
+      "data": {
+        "files": 2
+      }
+    },
+    "phase done": {
+      "event": "PhaseDone",
+      "data": {
+        "count": 3
+      }
+    },
+    "noted": {
+      "event": "Noted",
+      "data": {
+        "text": "a note",
+        "remedy": "a fix",
+        "code": null
+      }
+    },
+    "noted with a code": {
+      "event": "Noted",
+      "data": {
+        "text": "a folder can't be read",
+        "remedy": null,
+        "code": "os"
+      }
+    },
+    "finished": {
+      "event": "Finished",
+      "data": {
+        "added": 1,
+        "changed": 2,
+        "removed": 3,
+        "unreadable": 4
+      }
+    },
+    "listening": {
+      "event": "Listening",
+      "data": {
+        "url": "http://127.0.0.1:8765",
+        "home": "/home/.sift"
+      }
+    },
+    "lending": {
+      "event": "Lending",
+      "data": {
+        "machine": "workstation",
+        "port": 8766,
+        "key": "t0ken.p1n"
+      }
+    }
+  }
+}

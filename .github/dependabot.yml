@@ -10,8 +10,18 @@ updates:
       actions:
         patterns: ["*"]
 
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: /
+    cooldown:  # a release a week old: one found malicious is usually pulled within days
+      default-days: 7
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo  # the crates of the extension: native/Cargo.toml and its lock
+    directory: /native
     cooldown:  # a release a week old: one found malicious is usually pulled within days
       default-days: 7
     schedule:

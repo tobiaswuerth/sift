@@ -1,0 +1,361 @@
+import asyncio
+import hmac
+import json
+import logging
+import math
+import threading
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+from dataclasses import dataclass, field
+from functools import partial
+from pathlib import Path
+from types import MappingProxyType
+from typing import TYPE_CHECKING, cast
+
+from starlette.exceptions import HTTPException
+from starlette.requests import ClientDisconnect, Request
+from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.routing import Route
+
+from sift.api.collections import Audience
+from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, Problem, SiftError, system_failure
+from sift.api.events import EVENT_TAGS, Event, Noted, Reporter
+from sift.api.ids import CollectionId
+from sift.api.wire import CONTRACT, CONTRACT_HEADER, Json, contract_text, encoded, encoded_error
+from sift.app.kept_decoded import KeptDecoded
+from sift.app.resident import ResidentCodes
+from sift.domain.text.json_values import deeper_than
+from sift.domain.text.wording import counted
+from sift.interfaces.acts.acting import Acting
+from sift.interfaces.server.activity import Activity
+from sift.interfaces.server.gate import Gate
+from sift.interfaces.server.handled import Handled
+from sift.interfaces.server.jobs import HeldJob, Jobs
+from sift.interfaces.server.progress import Coalesced
+from sift.interfaces.server.results import KeptResults, Moment
+from sift.settings import Settings
+from sift.storage.catalog import known_collections
+from sift.storage.watching import HomeWatch
+
+if TYPE_CHECKING:
+    from sift.inference.models import Models
+
+HOSTS = ("127.0.0.1", "localhost")
+LINES = "application/x-ndjson; charset=utf-8"
+ALIVE_SECONDS = 30.0
+ALIVE = b'{"alive": true}\n'
+END = b""
+WAITING = "this command waits for {count} ahead of it: sift {command} (job {number}) runs now; see them with sift jobs"
+MOST_BODY = 1 << 20
+MOST_DEPTH = 64
+NO_JSON_REMEDY = "send the request as a JSON object"
+LOGGER = "sift.server"
+UNAUTHORIZED = InvalidRequestError(
+    "no token, or a wrong one", "send the token sift serve keeps in its user's own folder", code=Problem.UNAUTHORIZED
+)
+UNKNOWN = NotFoundError("no such command", "send one of sift's commands to /api/COMMAND")
+NOT_BY_POST = 405
+POSTED_ALONE = InvalidRequestError("a command is sent by POST", "POST its request as JSON to /api/COMMAND")
+NO_JSON = InvalidRequestError("the request is no JSON", NO_JSON_REMEDY)
+TOO_LARGE = InvalidRequestError(f"the request is longer than {MOST_BODY:,} bytes", "send a shorter request")
+BODY_SECONDS = 30.0
+SLOW = InvalidRequestError("the body of the request did not come in time", "send the request whole at once")
+LEFT = InvalidRequestError("the client left before the body of its request came", "send the request whole")
+FAILED_REMEDY = "see the home process's log in SIFT_HOME/logs, and report it"
+UNLISTED_AFTER = "the collections could not be listed after %s: nothing of a store stays in memory"
+SPOKEN = MappingProxyType({CONTRACT_HEADER: contract_text(CONTRACT)})
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class Serving:
+    settings: Settings
+    token: str
+    version: str
+    models: "Models"
+    codes: ResidentCodes
+    decoded: KeptDecoded
+    results: KeptResults
+    watch: HomeWatch
+    writer: ThreadPoolExecutor
+    pool: ThreadPoolExecutor
+    activity: Activity
+    alive_every: float = ALIVE_SECONDS
+    body_seconds: float = BODY_SECONDS
+    gate: Gate = field(default_factory=Gate)
+    jobs: Jobs = field(default_factory=Jobs)
+    clock: Callable[[], float] = time.perf_counter
+
+
+def _line(value: Json) -> bytes:
+    return json.dumps(value, ensure_ascii=False, allow_nan=False).encode() + b"\n"
+
+
+def _no_number(name: str) -> object:
+    raise InvalidRequestError(f"the request holds {name}, which is no JSON number", NO_JSON_REMEDY)
+
+
+def _finite(text: str) -> float:
+    number = float(text)
+    if not math.isfinite(number):
+        _no_number(text[:40])
+    return number
+
+
+def _given_once(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    held = dict[str, object]()
+    for key, value in pairs:
+        if key in held:
+            raise InvalidRequestError(f"the request gives the key {key[:40]!r} twice", NO_JSON_REMEDY)
+        held[key] = value
+    return held
+
+
+def json_of(body: bytes) -> object:
+    text = body.decode()
+    if deeper_than(text, MOST_DEPTH):
+        raise InvalidRequestError(f"the request is nested more than {MOST_DEPTH} deep", NO_JSON_REMEDY)
+    return cast(
+        "object", json.loads(text, parse_float=_finite, parse_constant=_no_number, object_pairs_hook=_given_once)
+    )
+
+
+def _refused(error: SiftError, status: int) -> JSONResponse:
+    return JSONResponse({"error": encoded_error(error)}, status_code=status, headers=dict(SPOKEN))
+
+
+@dataclass(frozen=True, slots=True)
+class Sent:
+    name: str
+    handled: Handled
+    data: object
+    audience: Audience
+
+
+def _acting(serving: Serving, report: Reporter, audience: Audience) -> Acting:
+    return Acting(
+        serving.settings,
+        report,
+        time.perf_counter,
+        lambda: serving.models,
+        audience,
+        serving.codes,
+        serving.decoded,
+        serving.jobs,
+    )
+
+
+def _searched(home: Path) -> set[tuple[Path, CollectionId]]:
+    return {(one.store, one.id) for one in known_collections(home) if one.active}
+
+
+def _resident_of_the_searched_alone(serving: Serving, written: str) -> None:
+    try:
+        searched = _searched(serving.settings.home)
+    except (SiftError, OSError):
+        logging.getLogger(LOGGER).exception(UNLISTED_AFTER, written)
+        searched = set[tuple[Path, CollectionId]]()
+    serving.codes.kept_only(searched)
+    serving.decoded.kept_only(searched)
+
+
+def _written(serving: Serving, sent: Sent, report: Reporter, alive: Callable[[], None]) -> object:
+    with serving.gate.alone(report, alive=alive) if sent.handled.alone else nullcontext():
+        serving.results.written()
+        try:
+            serving.watch.let_go()
+            return sent.handled.run(_acting(serving, report, sent.audience), sent.data)
+        finally:
+            try:
+                _resident_of_the_searched_alone(serving, sent.name)
+            finally:
+                serving.results.written()
+
+
+def _moment(serving: Serving) -> Moment:
+    return Moment(serving.results.seen(), serving.watch.seen())
+
+
+def _read(serving: Serving, sent: Sent, report: Reporter, noted: threading.Event) -> object:
+    with serving.gate.shared(report) if sent.handled.reads_stores else nullcontext():
+        return _answered(serving, sent, report, noted)
+
+
+def _answered(serving: Serving, sent: Sent, report: Reporter, noted: threading.Event) -> object:
+    acting = _acting(serving, report, sent.audience)
+    if sent.handled.kept is None:
+        return sent.handled.run(acting, sent.data)
+    key = f"{sent.audience.value} {sent.handled.kept(sent.data)}"
+    before = _moment(serving)
+    found = serving.results.found(key, before)
+    if found is not None:
+        return found
+    answer = sent.handled.run(acting, sent.data)
+    if not noted.is_set():
+        serving.results.keep(key, answer, before, _moment(serving))
+    return answer
+
+
+def _answer(serving: Serving, sent: Sent, report: Reporter, noted: threading.Event, job: HeldJob | None) -> object:
+    if job is None:
+        return _read(serving, sent, report, noted)
+    serving.jobs.began(job)
+    return _written(serving, sent, serving.jobs.reporting(job, report), partial(serving.jobs.alive, job))
+
+
+def _unheard(_event: Event) -> None:
+    return None
+
+
+def read_for(serving: Serving, sent: Sent) -> object:
+    return _read(serving, sent, _unheard, threading.Event())
+
+
+def run_job(serving: Serving, sent: Sent, job: HeldJob) -> object:
+    try:
+        return _answer(serving, sent, _unheard, threading.Event(), job)
+    except (SiftError, OSError):
+        raise
+    except Exception:
+        logging.getLogger(LOGGER).exception("%s failed", sent.name)
+        raise
+    finally:
+        serving.jobs.ended(job)
+
+
+@dataclass(frozen=True, slots=True)
+class _Lines:
+    loop: asyncio.AbstractEventLoop
+    queue: "asyncio.Queue[tuple[bytes, ...]]"
+    gone: threading.Event
+
+    def put(self, *lines: bytes) -> None:
+        if not self.gone.is_set() and not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, lines)
+
+
+def _final(serving: Serving, sent: Sent, report: Reporter, noted: threading.Event, job: HeldJob | None) -> bytes:
+    started = time.perf_counter()
+    try:
+        answer = _answer(serving, sent, report, noted, job)
+    except (SiftError, OSError) as error:
+        refused = system_failure(error) if isinstance(error, OSError) else error
+        logging.getLogger(LOGGER).info("%s refused: %s", sent.name, refused.code.value)
+        return _line({"error": encoded_error(refused)})
+    except RecursionError:
+        raise
+    except Exception as error:
+        logging.getLogger(LOGGER).exception("%s failed", sent.name)
+        failed = InternalError(f"the home process failed: {type(error).__name__}: {error}", FAILED_REMEDY)
+        return _line({"error": encoded_error(failed)})
+    logging.getLogger(LOGGER).info("%s answered in %.2f s", sent.name, time.perf_counter() - started)
+    return _line({"answer": encoded(answer)})
+
+
+def _ran(serving: Serving, sent: Sent, lines: _Lines, job: HeldJob | None) -> None:
+    noted = threading.Event()
+
+    def said(event: Event) -> None:
+        if isinstance(event, Noted):
+            noted.set()
+        lines.put(_line({"event": EVENT_TAGS[type(event)], "data": encoded(event)}))
+
+    report, final = Coalesced(said, serving.clock), tuple[bytes, ...]()
+    try:
+        final = (_final(serving, sent, report, noted, job),)
+    finally:
+        report.flush()
+        if job is not None:
+            serving.jobs.ended(job)
+        lines.put(*final, END)
+
+
+def _waiting(serving: Serving, job: HeldJob) -> Iterator[bytes]:
+    if ahead := serving.jobs.ahead(job):
+        said = WAITING.format(count=counted(len(ahead), "job"), command=ahead[0].command, number=ahead[0].number)
+        yield _line({"event": EVENT_TAGS[Noted], "data": encoded(Noted(said))})
+
+
+async def _streamed(serving: Serving, name: str, handled: Handled, data: object) -> AsyncIterator[bytes]:
+    lines = _Lines(asyncio.get_running_loop(), asyncio.Queue(), threading.Event())
+    job = serving.jobs.queued(name) if handled.writes else None
+    waiting = () if job is None else tuple(_waiting(serving, job))
+    ran = (serving.pool if job is None else serving.writer).submit(
+        _ran, serving, Sent(name, handled, data, Audience.PEOPLE), lines, job
+    )
+    getting = asyncio.ensure_future(lines.queue.get())
+    try:
+        for line in waiting:
+            yield line
+        while True:
+            if not (await asyncio.wait({getting}, timeout=serving.alive_every))[0]:
+                yield ALIVE
+                continue
+            batch = getting.result()
+            for line in batch:
+                if line != END:
+                    yield line
+            if END in batch:
+                break
+            getting = asyncio.ensure_future(lines.queue.get())
+    finally:
+        lines.gone.set()
+        getting.cancel()
+        if job is not None and not ran.done():
+            job.watched = False
+    await asyncio.wrap_future(ran)
+
+
+@dataclass(frozen=True, slots=True)
+class UnreadBody:
+    status: int
+    error: InvalidRequestError
+
+
+TOO_LONG_BODY, SLOW_BODY, LEFT_BODY = UnreadBody(413, TOO_LARGE), UnreadBody(408, SLOW), UnreadBody(400, LEFT)
+
+
+async def body_of(request: Request, *, seconds: float, most: int = MOST_BODY) -> bytes | UnreadBody:
+    read = bytearray()
+    try:
+        async with asyncio.timeout(seconds):
+            async for chunk in request.stream():
+                read += chunk
+                if len(read) > most:
+                    return TOO_LONG_BODY
+    except TimeoutError:
+        return SLOW_BODY
+    except ClientDisconnect:
+        logging.getLogger(LOGGER).info(LEFT.message)
+        return LEFT_BODY
+    return bytes(read)
+
+
+async def _command(serving: Serving, name: str, handled: Handled, request: Request) -> Response:
+    given = (request.headers.get("authorization") or "").encode()
+    if not hmac.compare_digest(given, f"Bearer {serving.token}".encode()):
+        return _refused(UNAUTHORIZED, 401)
+    body = await body_of(request, seconds=serving.body_seconds)
+    if isinstance(body, UnreadBody):
+        return _refused(body.error, body.status)
+    try:
+        data = json_of(body)
+    except InvalidRequestError as refused:
+        return _refused(refused, 400)
+    except ValueError:
+        return _refused(NO_JSON, 400)
+    return StreamingResponse(_streamed(serving, name, handled, data), media_type=LINES, headers=dict(SPOKEN))
+
+
+async def unknown_command(_request: Request, error: Exception) -> Response:
+    if isinstance(error, HTTPException) and error.status_code == NOT_BY_POST:
+        answer = _refused(POSTED_ALONE, NOT_BY_POST)
+        answer.headers["Allow"] = "POST"
+        return answer
+    return _refused(UNKNOWN, 404)
+
+
+def command_route(serving: Serving, name: str, handled: Handled) -> Route:
+    answer: Callable[[Request], Awaitable[Response]] = partial(_command, serving, name, handled)
+    return Route(f"/api/{name}", answer, methods=["POST"])

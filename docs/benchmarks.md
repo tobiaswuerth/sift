@@ -5,55 +5,60 @@ seven datasets with several rerankers and embedding models; the default is the s
 one dataset. To measure sift on your own documents, use
 [`sift bench`](usage.md#measuring-search-on-your-own-documents).
 
-Timings come from one desktop workstation with a 24 GB NVIDIA GPU and NVMe disks; the models run in bfloat16 on the
-GPU, as sift runs them.
+Timings come from one desktop workstation with a 24 GB NVIDIA GPU, 32 CPU threads, 192 GB of RAM and NVMe disks; the
+models run in bfloat16 on the GPU, as sift runs them.
 
-- [Reference values](#reference-values)
+- [Reference values](#reference-values): search, indexing, topical order, embedding
 - [Search quality](#search-quality): datasets, method, the blend, rerankers, embedding models
-- [Speed](#speed): models, reranking, embedding, keyword search, vectors in memory, links
+- [Design measurements](#design-measurements): models, reranking batches, vectors in memory, the keyword index
 - [Tried and not adopted](#tried-and-not-adopted), [not measured](#not-measured)
 
 ## Reference values
 
-The large index holds 45.7 million passages of paper abstracts (arXiv 3.2 million, PubMed 29.9 million, OpenAlex 12.0
-million, bioRxiv 0.47 million, the ACL Anthology 0.09 million), every passage embedded, searched through `sift serve`
-(sift 1.11.1), 10 hits each. Times are a query's first call and the median of two more ("warm": what it reads is in
-memory by then), including the MCP round trip.
+Measured on copies of seven collections, 45.7 million passages of abstracts, papers, laws and notes: PubMed 29.9
+million, OpenAlex 12.0 million, arXiv 3.3 million, bioRxiv 0.47 million, the ACL Anthology 0.09 million, Swiss
+federal law 0.08 million and a collection of notes. Another workload shared the CPU (at a lower priority) and the
+GPU throughout.
 
-| Use case | Mode | Large index, first / warm | arXiv alone, warm |
+**Search** over all seven, every passage embedded, through `sift serve` with its models loaded, 10 hits each. Each row
+is the median over 8 questions, of each question's first call and of two more calls asking for 11 and 12 hits, which the
+home process's cache of results cannot answer ("warm": what they read is in memory by then):
+
+| Use case | Mode | First call | Warm |
 |---|---|---|---|
-| A name, an id, a rare term | `search`, one word | 93 / 10 ms | 0.7 ms |
-| A common word ("patients") | `search`, one word | 332 / 17 ms | |
-| A few words, all required | `search` | 66–122 / 31–46 ms | 2–7 ms |
-| A question of 15 words, by keywords | `search` | 594 / 223 ms | 34–81 ms |
-| A quoted phrase | `search` | 1.9 / 0.6–1.0 s | 1–131 ms (1.11.2) |
-| A question with a hyphenated word ("first-stage") | `search` | 2.8 / 1.6 s | 93 ms (1.11.2) |
-| By meaning | `vsearch` | 635 / 613 ms | 94 ms |
-| By meaning, filtered (a small collection, by year) | `vsearch` | 343 / 189 ms | |
-| A question for RAG, reranked on the GPU | `query` | 1.1 / 0.57 s | 0.28 s |
-| More papers like this one | `similar` | 708 / 702 ms | |
+| A name, an id, a rare term | `search`, one word | 157 ms | 31 ms |
+| A common word ("patients") | `search`, one word | 466 ms | 184 ms |
+| A few words, all required | `search` | 261 ms | 76 ms |
+| A question of 6 to 15 words, by its keywords | `search` | 600 ms | 274 ms |
+| A quoted phrase | `search` | 732 ms | 326 ms |
+| By meaning | `vsearch` | 794 ms | 416 ms |
+| A question for RAG, reranked on the GPU | `query` | 1.08 s | 0.53 s |
+| More papers like this one | `similar` | 604 ms | 349 ms |
 
-- **Phrases** got faster in 1.11.2 (counted once per passage and kept): a phrase asked again costs a half to a
-  twentieth of what it did over arXiv. The large-index figures are 1.11.1's.
-- **On the CPU**, `query`'s reranker takes about 25 seconds a question; the other modes need no GPU, and a
-  [`sift worker`](worker.md) lends one.
-- **Memory:** the vectors' codes take 96 bytes a passage in RAM, 4.4 GB for 45.7 million; the keyword postings a third
-  of FTS5's index on disk.
-- **Building:** `sift embed` embeds 370 to 520 PubMed passages a second (EmbeddingGemma-2). `sift index` builds the
-  keyword postings of arXiv in 69 seconds (24 processes) and of PubMed in 13 to 15 minutes (31), orders 3.2 million
-  passages by topic in about a minute, and passes over unchanged folders in a moment (0.1 s for 2,364 files).
+- **The first semantic search** of a home process reads the codes of every passage's vector, 4.4 GB for 45.7 million,
+  and loads the embedding model: 104 s from a cold disk. Later searches find both in memory.
+- **A phrase of the commonest words**, such as "in this paper we propose", would read 76 million passages here, more
+  than the 10 million a search reads ([limits](limits.md)); it is refused, saying to add a rarer word.
+- **On the CPU alone**, over Swiss federal law and the notes (76,738 passages), `query` took 14 to 23 s a question
+  (median 19 s); `search`, `vsearch` and `similar` stayed under 0.2 s.
 
-How well each mode finds what is sought (nDCG@10; MRR@10 for the known items):
+**Indexing**: reading every file into a new store, then `sift index`, which puts each collection in its topical
+order:
 
-| Kind of question | `search` (BM25) | `vsearch` | `query` |
-|---|---|---|---|
-| Scientific claims against abstracts (SciFact) | 0.666 | 0.840 | 0.813 |
-| Medical questions (NFCorpus) | | 0.358 | 0.361 |
-| Financial questions against forum answers (FiQA) | | 0.314 | 0.464 |
-| German questions against passages (GermanQuAD) | | 0.955 | 0.987 |
-| Long German documents (MLDR, German) | | 0.534 | 0.685 |
-| Literature search over ML and NLP papers (LitSearch) | | 0.486 | 0.631 |
-| One known paper among 3.2 million (arXiv; MRR@10) | | | 0.929 |
+| Collection | Files | Passages | Reading the files | Merging | Topical order: clusters / index built beside / merged |
+|---|---|---|---|---|---|
+| arXiv (JSON Lines) | 425 | 3,252,534 | 8 min 22 s | 30 s | 9.4 s / 1 min 29 s / 26 s |
+| bioRxiv (JSON Lines) | 247 | 472,612 | 42 s | 6.7 s | 3.1 s / 13 s / 5.2 s |
+| ACL Anthology (JSON Lines) | 1,134 | 90,546 | 7.3 s | | 0.7 s / 1.8 s |
+| Swiss federal law (Markdown) | 5,339 | 75,851 | 16 s | | 0.6 s / 3.8 s |
+
+- **Reading the files** includes splitting them into passages and writing their keywords, in the documents'
+  transaction. Run alone on the arXiv papers of 2024 (12 files, 244,047 passages), it took 18 s, and the merge 2 s.
+- **Clustering PubMed's** 29.9 million codes for its topical order took 2 min 4 s.
+- **Unchanged folders** cost a look: arXiv's 425 files were passed over in 56 ms.
+
+**Embedding**, `sift embed` of 40,579 PubMed abstracts on the GPU: 1,180 passages a second, after compiling the model
+for 20 s (41 s the first time, when PyTorch's cache of compiled kernels is empty).
 
 ## Search quality
 
@@ -72,6 +77,18 @@ How well each mode finds what is sought (nDCG@10; MRR@10 for the known items):
 - **arXiv known items** was written for sift and isn't distributed: titles and abstracts of all of arXiv (the Kaggle
   snapshot); 12 queries name front matter (an author, an arXiv id), 37 describe a topic.
 - **LitSearch** is reported by nDCG@10 like the others; its paper reports Recall@5 and Recall@20.
+
+How well each mode finds what is sought, with the default models (nDCG@10; MRR@10 for the known items):
+
+| Kind of question | `search` (BM25) | `vsearch` | `query` |
+|---|---|---|---|
+| Scientific claims against abstracts (SciFact) | 0.666 | 0.840 | 0.813 |
+| Medical questions (NFCorpus) | | 0.358 | 0.361 |
+| Financial questions against forum answers (FiQA) | | 0.314 | 0.464 |
+| German questions against passages (GermanQuAD) | | 0.955 | 0.987 |
+| Long German documents (MLDR, German) | | 0.534 | 0.685 |
+| Literature search over ML and NLP papers (LitSearch) | | 0.486 | 0.631 |
+| One known paper among 3.2 million (arXiv; MRR@10) | | | 0.929 |
 
 ### Method
 
@@ -107,8 +124,8 @@ Ettin-150M:
 
   score = rerank + w · (σ<sub>rerank</sub> / σ<sub>cosine</sub>) · (cosine − mean cosine)
 
-  σ is the standard deviation over the candidates. w = 0.5 is the best or tied-best weight under every reranker and
-  embedding model below.
+  σ is the standard deviation over the candidates. sift uses w = 0.5, which ties the best weight under its reranker
+  (below).
 
 ### Rerankers
 
@@ -124,7 +141,7 @@ All score the same EmbeddingGemma-2 pools; w is the blend weight.
 | Ettin-150M | 149M | 0.75 | 0.822 | 0.396 | 0.452 | 0.976 | 0.551 | 0.611 | 0.946 | 0.679 | 0.164 |
 | Qwen3-Reranker-0.6B | 596M | 0.75 | 0.835 | 0.403 | 0.419 | 0.983 | 0.602 | 0.613 | 0.859 | 0.674 | 0.113 |
 | mxbai-rerank-large-v1 | 435M | 0.75 | 0.830 | 0.406 | 0.437 | 0.985 | 0.447 | 0.604 | 0.870 | 0.654 | 0.268 |
-| Ettin-150M, no blend (up to 0.8.0) | 149M | 0 | 0.760 | 0.374 | 0.463 | 0.937 | 0.481 | 0.568 | 0.936 | 0.646 | 0.235 |
+| Ettin-150M, no blend | 149M | 0 | 0.760 | 0.374 | 0.463 | 0.937 | 0.481 | 0.568 | 0.936 | 0.646 | 0.235 |
 
 - **gte-reranker-modernbert-base, blended** (the default; Apache-2.0) is the smallest of the leaders and never more
   than 0.05 below the best on any dataset. Against Ettin-150M alone it gains 0.05 on the mean and 0.20 on long German
@@ -153,24 +170,26 @@ With `query` (gte-reranker-modernbert-base, w = 0.5) over each model's candidate
 | Snowflake Arctic-Embed-L v2.0 | 0.756 | 0.358 | 0.505 | 0.986 | **0.700** | 0.624 | 0.959 | 0.698 |
 | bge-m3 | 0.753 | 0.340 | 0.486 | 0.986 | 0.695 | 0.601 | 0.948 | 0.687 |
 | Qwen3-Embedding-0.6B | 0.762 | 0.360 | **0.518** | **0.988** | 0.695 | 0.417 | 0.959 | 0.671 |
-| *Ettin-150M alone over EmbeddingGemma-2 (up to 0.8.0)* | 0.760 | 0.374 | 0.463 | 0.937 | 0.481 | 0.568 | 0.976 | 0.651 |
+| *Ettin-150M alone over EmbeddingGemma-2* | 0.760 | 0.374 | 0.463 | 0.937 | 0.481 | 0.568 | 0.976 | 0.651 |
 
 - **No model wins everywhere:** EmbeddingGemma-2 leads far on scientific claims and trails on financial questions.
 - **The reranker narrows the gaps** (means 0.571–0.622 alone, 0.671–0.700 under `query`), and the blend carries each
   model's strengths through: EmbeddingGemma-2 keeps +0.06 on scientific claims, Arctic +0.04 on financial questions
   and +0.015 on long German documents.
 - **gte-reranker-modernbert-base, blended, is the best reranker under every embedding model** (worst gap 0.02–0.04).
-- **EmbeddingGemma-2 stays the default:** Arctic ties it on average, and a new default would force every index to be
-  embedded again. For a new index of business documents, Arctic is a good choice.
-- **Qwen3-Embedding's LitSearch score** is out of line with its others and unexplained; it isn't held against it.
+- **EmbeddingGemma-2 is the default:** Arctic ties it on average, and a change of default would force every index to
+  be embedded again. For a new index of business documents, Arctic is a good choice.
+- **Qwen3-Embedding's LitSearch score** is out of line with its other scores and unexplained, so it isn't held
+  against the model.
 
-## Speed
+## Design measurements
 
 ### Models
 
-Each model ran alone on an otherwise idle machine, after a warm-up. The rerankers scored 50 queries × 80 candidates,
-half from SciFact (short abstracts), half from MLDR (long German documents): on the GPU 5 repetitions (spread ≤ 1%), on
-8 CPU threads in float32 over a tenth of the inputs, 3 repetitions (spread ≤ 10%).
+Each model ran alone on an otherwise idle machine, after a warm-up, as PyTorch runs it without compiling. The
+rerankers scored 50 queries × 80 candidates, half from SciFact (short abstracts), half from MLDR (long German
+documents): on the GPU 5 repetitions (spread ≤ 1%), on 8 CPU threads in float32 over a tenth of the inputs, 3
+repetitions (spread ≤ 10%).
 
 | Reranker | Size | GPU, ms per query | CPU, ms per query |
 |---|---|---|---|
@@ -192,8 +211,8 @@ The embedding models embedded 2,000 passages (half SciFact, half MLDR) and 100 q
 
 ### Reranking in batches of similar length
 
-A question's 80 candidates were reranked in one batch, padded to the longest. Over the benchmark pools, the work that
-is against none padded (tokens / attention's square):
+A question's 80 candidates, reranked in one batch, are padded to the longest. Over the benchmark pools, the work
+against none padded (tokens / attention's square):
 
 | Pool | One batch of 80 | Batches of 16, sorted by length | Batches of 10 |
 |---|---|---|---|
@@ -202,75 +221,22 @@ is against none padded (tokens / attention's square):
 | GermanQuAD | 1.89 / 3.00 | 1.18 / 1.36 | 1.11 / 1.21 |
 | LitSearch | 2.43 / 5.47 | 1.29 / 1.89 | 1.17 / 1.51 |
 
-Over 10 questions each from the arXiv and FiQA pools, ms a question: 331 in one batch (sift 1.11), 213 in batches of
-32, **180 in 16** (sift 1.12), 259 in 8; the scores moved by at most 0.08, bfloat16's rounding.
+Over 10 questions each from the arXiv and FiQA pools, ms a question: 331 in one batch, 213 in batches of 32, **180 in
+16**, sift's batches, and 259 in 8; the scores moved by at most 0.08, bfloat16's rounding.
 
-### Embedding
+### Embedding many passages
 
-`sift embed` with EmbeddingGemma-2 over 6,000 PubMed abstract passages (339 tokens on average) and their 6,000 titles
-(30 tokens); the mean of 2 runs:
+`sift embed` over the 40,579 PubMed abstracts above, the GPU sampled every 100 ms:
 
-| Batches | Passages per second | CPU cores busy |
-|---|---|---|
-| sift 1.8: grouped by characters, a CPU thread per core | 171 | 4.7 |
-| sift 1.9: grouped by tokens, one CPU thread | **230** | 0.9 |
-
-| Titles, batch of | Grouped by characters | Grouped by tokens |
-|---|---|---|
-| 140 | 2,295 per second, padded to 1.50 times their tokens | **2,504**, 1.04 times |
-| 1,024 | 1,742, 1.78 times | 2,424, 1.30 times |
-
-- Grouped by characters, passages were padded to 1.51 times their tokens; by tokens, 1.04 times.
-- A batch of 140 short texts already fills the GPU; 1,024 only adds padding. So one batch size, sized for the longest
-  input, serves every length.
-- One CPU thread beside the GPU embedded 5% faster and freed most cores.
-
-Over 40,114 PubMed passages from no vectors, the GPU sampled every 100 ms: sift 1.10.0 embedded 382 passages a second
-with the GPU busy 83% of the time, sift 1.10.1 **472** at 99%, the vectors the same bit for bit. Profiled, 1.10.0 spent
-72% in the model, 12% tokenizing each slab to sort it (the GPU idle) and 11% tokenizing each batch (idle again); now a
-thread sorts the next slabs, another writes, and each batch is tokenized while the GPU embeds the one before.
-
-### Keyword search
-
-63 queries: 18 single words ("crispr" to "the"), 20 requiring all their words ("graph neural network", ids), and 25
-questions as `query` asks them, any of their words. The best 10 documents; FTS5 read warm. "Cold": the postings read
-anew, as by `sift search`; "warm": read before, as by `sift serve`. Every query found FTS5's documents, score for score.
-
-| Median | FTS5 | Postings, cold | Postings, warm |
-|---|---|---|---|
-| arXiv (3.2 million passages), single words | 120 ms | 10 ms | 0.7 ms |
-| arXiv, all words | 20 ms | 21 ms | 2 ms |
-| arXiv, questions | 510 ms | 115 ms | 13 ms |
-| PubMed (29.9 million passages), single words | 1.33 s | 67 ms | 7 ms |
-| PubMed, all words | 30 ms | 86 ms | 7 ms |
-| PubMed, questions | 5.3 s | 200 ms | 26 ms |
-
-- **FTS5 scores every passage a word occurs in**, about a microsecond each: "the" in 29.6 million PubMed passages took
-  25 seconds. The postings score the best ranges first: for "the", a few hundred postings.
-- **The slowest question** took 16 s in FTS5, 2.7 s cold and 1.1 warm from the postings: a dozen common words bound
-  most ranges high. Smaller ranges would bound them tighter, at more storage.
-- **All of a few rare words** is the one kind FTS5 answers faster cold (30 ms against 86 on PubMed), as it intersects
-  lists while reading; warm, the postings take 7 ms.
-- **Storage:** 0.94 GB for arXiv's 431 million postings against 2.71 GB for FTS5's index (2.2 bytes a posting); 12.2 GB
-  for PubMed.
-- **Ranges of 128 rather than 64 passages:** on PubMed, warm, single words in 2.2 ms against 5.8 and questions in 16
-  against 23 (median), the longest question slower (0.53 s against 0.24), and 8% less storage.
-- **Topical order** (sift 1.11): over arXiv, warm, questions took 3.7 ms instead of 5.2 (median) and the slowest 45
-  instead of 90, scoring a half to a twentieth as many ranges; single words 0.7 ms instead of 0.3, as a word's best
-  passages spread over more ranges. The blocks took 0.61 GB instead of 0.66, the order 13 MB.
-- **Common words read only where they matter** (sift 1.11.1), over arXiv, warm, the same results:
-
-  | Query | 1.11.0 | 1.11.1 |
-  |---|---|---|
-  | seven words, all required | 65 ms | 7 ms |
-  | questions of 10 to 14 words | 0.44 to 2.5 s | 34 to 81 ms |
-  | `query`'s keyword candidates (any of the words) | 22 to 230 ms | 9 to 62 ms |
-  | a question with a hyphenated word, through FTS5 before | 8.7 s | 0.43 s |
-  | quoted phrases, through FTS5 before | 10 to 97 ms | 3 to 16 ms |
-
-- **A phrase counted once per passage** (sift 1.11.2): 62% of a hyphenated question's time had been FTS5 counting the
-  phrase in the same passages again. Over arXiv, warm: that question 93 ms instead of 429, "in this paper we propose"
-  131 ms instead of 2.6 s, four others 1 to 7 ms instead of 3 to 14. A new question's first call costs what it did.
+- **Longest first:** it reads 16,384 passages at a time and embeds them longest first, so that a batch's texts are
+  of similar length and little of the GPU's work is padding.
+- **The next batch's words cut ahead:** a thread tokenizes the next two batches, their tensors pinned in memory and
+  copied without waiting, while the model runs on the one before.
+- **The model compiled:** PyTorch compiles the whole model into one graph, with no break in it, for any batch size
+  and length (`dynamic=True`). That doubles the passages a second; the GPU is then busy 82 to 84% of the time, the
+  rest mostly the store's reads and writes. A batch of one text would be compiled again, so queries and single texts
+  run the model as it is; and the model is compiled under the threads the process runs with, as changing them later
+  compiles it again.
 
 ### Vectors in memory
 
@@ -295,13 +261,13 @@ known-item title queries: recall@k is the share of exact search's top k found; M
 
 One bit per dimension, then exact scores, keeps the quality at a sixteenth of the memory; truncating dimensions loses
 more. Ranking by the float query (its values against the codes' signs) needs a quarter of the exact scores Hamming
-distance needs. sift does both, one after the other (1.11): Hamming over all codes, the float query over the nearest N
+distance needs. sift does both, one after the other: Hamming over all codes, the float query over the nearest N
 (3 ms for 10,000), exact scores for its best M. Reading vectors is most of a search's time: 25 ms for 4,000, warm,
 7 ms for 1,000.
 
 | Hamming nearest N | Float query's best M, scored exactly | Recall@10 | MRR@10 | Hit@10 |
 |---|---|---|---|---|
-| 4,000 | (all 4,000, sift 1.10) | 0.9961 | 0.9530 | 0.9905 |
+| 4,000 | (all 4,000) | 0.9961 | 0.9530 | 0.9905 |
 | 1,000 | (all 1,000) | 0.9794 | 0.9530 | 0.9905 |
 | 10,000 | 400 | 0.9921 | 0.9530 | 0.9905 |
 | **10,000** | **1,000** | **0.9975** | **0.9530** | **0.9905** |
@@ -309,11 +275,6 @@ distance needs. sift does both, one after the other (1.11): Hamming over all cod
 | 20,000 | 1,000 | 0.9978 | 0.9530 | 0.9905 |
 | 40,000 | 1,000 | 0.9979 | 0.9530 | 0.9905 |
 
-- **The compiled scan** (sift 1.12): NumPy scanned the codes in three passes, writing and reading two arrays as large
-  as the codes, at 10 GB/s; compiled by Numba, each code is read once. Over 12.9 million codes (arXiv's four times
-  over), alternating runs: 133 ms (median 164) with NumPy, 43 (56) compiled, the same distances. Four queries in one
-  pass took 35 ms. Loading Numba takes about 1.6 s once per process, hence only `sift serve` and `sift bench` load it,
-  and collections under 65,536 passages, where it gains under a millisecond, keep NumPy.
 - **Filters:** listing every passage a filter lets through reads every document: over arXiv, a category took 6.2 s warm
   (56 cold), whether it let 9% through or 0.9%. Checking candidates costs 4 to 5 µs each warm, 90 cold, so sift checks
   the nearest first and lists only when it would check more than a fifth of the passages. Until 10,000 candidates
@@ -330,43 +291,52 @@ distance needs. sift does both, one after the other (1.11): Hamming over all cod
 
   Known items mostly drop after the first hit; questions with many answers need more, hence five.
 
-### Links between notes
+### The keyword index
 
-A synthetic vault of 20,000 notes and 220,000 links, one note linked by 6,000 others, a tenth of the links to notes not
-written yet; best of 3:
-
-| Operation | Time |
-|---|---|
-| `sift index` (20 processes) | 6.9 s |
-| `links` out of a note; both ways, two steps | 0.1 ms; 1.5 ms |
-| `links` into the most linked note, 50; 10,000 | 16 ms; 42 ms |
-| `unresolved` over the vault | 210 ms |
-| `search` with `links_to` the most linked note (without) | 25 ms (19 ms) |
-| `mentions` of the most linked note | 20 ms |
-
-Reading links costs nothing measurable: 20,000 notes without links read in 0.617 s before, 0.626 s after.
+- **Searches in the compiled extension:** the lengths of passages, the positions a phrase needs, the blocks a search
+  reads and the union a prefix makes are unpacked in Rust, a call for a whole read rather than one a block. Over a
+  collection of 2.2 million records, cold, the same hits at every search: a rare word in 15 ms, a question in 43, a
+  phrase in 52, a rare phrase in 126, a phrase of common words in 369 and a prefix of many words in 358.
+- **Clustering in the compiled extension:** the topical order's k-means measures every code against every centroid
+  in one pass on all cores. bioRxiv's 472,612 codes were clustered in 2.1 s where NumPy, a centroid at a time, took
+  14.7 s, and into the same order.
+- **Readers beside the writer:** a new order reads every passage again, scattered over the store. Eight readers on
+  their own connections read the parts ahead while the writer tokenizes and writes: bioRxiv's index was built beside
+  in 19 s instead of 44 from a cold disk, and in 12.5 s instead of 18 from memory. A reader takes a part's
+  documents and text blocks as one row of JSON each: read row by row, each thread let go of Python's lock at every
+  row and waited to take it back, and eight readers read slower than one.
 
 ## Tried and not adopted
 
 - **Reranking fewer candidates when the lists agree:** simulated on the stored scores of the pools. 20 keyword and 20
   semantic candidates instead of 40 each cost the arXiv known items 5 points of nDCG@10 and FiQA 2; doing so only when 5
-  of the top 20 agree still reranked 65 to 85% and cost 0.5 to 0.7 points. Batching by length took most of the time.
+  of the top 20 agree still reranked 65 to 85% and cost 0.5 to 0.7 points. Batching by length already saves most of that
+  time.
 - **Query expansion by the agent** (as [QMD](https://github.com/tobi/qmd) does: keywords, a rewrite, a hypothetical
   answer): MRR@10 on the arXiv known items rose from 0.936 to 0.938, one query rescued. Agents may still search several
   phrasings.
-- **zstd instead of zlib for the postings' blocks:** decoding 43 to 54 µs a block against 40 to 76, the same size; only
-  writing was faster. Not worth a store older sifts can't read.
 - **int8 vectors for the exact scores:** over 500 title queries, recall@10 0.962 (a scale per vector) or 0.974 (per
   dimension) against 0.996, MRR@10 unchanged. Half the vectors' storage for three points of recall.
 - **A first scan of the first 256 dimensions' bits,** keeping the nearest P: recall@10 0.9938 keeping 100,000, 0.9954
-  keeping 300,000, against 0.9958. It would read a third of the codes but need them apart in memory (1.5 GB more at 46
-  million), and the compiled scan took most of its gain.
+  keeping 300,000, against 0.9958. It would read a third of the codes but need a separate copy of them in memory (1.5 GB
+  more at 46 million).
 - **Centering before the signs:** codes of v − mean found more of the top 10 by Hamming distance alone (0.9917 against
   0.9794 among the 1,000 nearest), but the float query's ranking loses it, as centered vectors differ in length: the
   whole cascade found 0.9788 instead of 0.9975.
 - **Scanning the nearest clusters only** (the postings' topical order, 4,096 leaves), as an inverted file does: of the
   top 10, 0.9882 scanning 10% of the codes, 0.9952 at 20%, 0.9966 at 30%, against 0.9975 for all. A third would save
   at most two thirds of the scan, at a loss of recall, with clusters to keep up and filters to check otherwise.
+- **Compiling the model region by region,** each repeated layer once: the first batch came after 5.6 s instead of
+  20, but the model embedded 14% slower than compiled whole.
+- **Compiling the model ahead of time** (AOTInductor) or saving the exported graph: on Windows the first needs
+  Microsoft's C++ compiler on the user's machine; the second took 6.6 s to load from a file of 1.5 GB and then as
+  long to compile as the model itself.
+- **A wider window of passages sorted by length** for `sift embed`: 3% faster end to end, not worth the memory.
+- **Memory-mapping the store** while an order is built beside: the cold reads took a third of their time, but SQLite
+  maps at most 2 GB of a store, so a large one gains little.
+- **Reading a new order's passages in the store's order** rather than the new one: no faster from a cold disk, as
+  each passage was still a read of its own.
+- **Sixteen readers** instead of eight: slower, as they wait for Python's lock more than for the disk.
 
 ## Not measured
 

@@ -1,7 +1,6 @@
 name: CI
 
-# Every pull request must pass these checks before it can merge, and they run again on each commit the merges make
-# on main. The release workflow publishes only a commit of main whose run here passed.
+# Every job runs a session of the gate (noxfile.py), as `uv run --only-group gate nox` runs it locally.
 on:
   pull_request:
   push:
@@ -11,126 +10,133 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # each commit of main keeps its run: it may be a release
+
+env:
+  NOX: uv run --locked --only-group gate nox
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   lint:
+    env:
+      PYTHON: "3.12"
+      SESSION: lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    steps:
+    steps: &prepare
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          persist-credentials: false  # no step after it pushes with git
+          persist-credentials: false
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
-          python-version: "3.12"
-      - run: uvx pre-commit run --all-files --show-diff-on-failure
+          version: "0.13.9"
+          python-version: ${{ env.PYTHON }}
+          enable-cache: true
+      - run: $NOX -s "$SESSION"
 
   types:
-    # pyright, strictly, over all of sift: as on each system sift runs on, whichever runs this.
+    env:
+      PYTHON: "3.12"
+      SESSION: types
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false  # no step after it pushes with git
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
-        with:
-          python-version: "3.12"
-          activate-environment: true  # pyright reads the packages of the `python` on the PATH
-          enable-cache: true
-      - run: uv pip install --torch-backend cpu -e ".[dev]"
-      - run: pyright --pythonplatform Linux
-      - run: pyright --pythonplatform Darwin
-      - run: pyright --pythonplatform Windows
+    steps: *prepare
 
   first:
-    # The oldest and the newest Python, on one system, before the other jobs of the matrix: what fails on a Python,
-    # as a warning new in one does, is said by two jobs, not by twenty. Named as the matrix names its jobs.
-    # Tests use small fake models, so they need neither a GPU nor model downloads. Coverage must stay at 100%.
+    env:
+      PYTHON: ${{ matrix.python }}
+      SESSION: tests-${{ matrix.python }}
+    # The oldest and the newest Python first: what fails on one is said by two jobs, not by sixteen.
     name: test (${{ matrix.os }}, ${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ["3.11", "3.15"]
+        python: ["3.12", "3.15"]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20  # a hung install fails here instead of after GitHub's 6 hours
-    steps: &test
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false  # no step after it pushes with git
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
-        with:
-          python-version: ${{ matrix.python }}
-          activate-environment: true
-          enable-cache: true
-      - run: uv pip install --torch-backend cpu -e ".[dev]"
-      # In a process per core: a quarter of the time on four. The slowest are named: what a system is slow at shows.
-      - run: pytest -q --cov -n auto --durations=15
-      # Every command that loads no model, as a user runs it, each in a process of its own. Those that load the
-      # models (--models) download them: run before a release (docs/CONTRIBUTING.md).
-      - run: python scripts/smoke.py
+    timeout-minutes: 20
+    steps: *prepare
 
   test:
-    # Every other system and Python, once the hooks, the types and the first two jobs pass.
+    env:
+      PYTHON: ${{ matrix.python }}
+      SESSION: tests-${{ matrix.python }}
     name: test (${{ matrix.os }}, ${{ matrix.python }})
     needs: [lint, types, first]
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
-        exclude:  # what `first` ran
-          - {os: ubuntu-latest, python: "3.11"}
+        python: ["3.12", "3.13", "3.14", "3.15"]
+        exclude:
+          - {os: ubuntu-latest, python: "3.12"}
           - {os: ubuntu-latest, python: "3.15"}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps: *test
+    timeout-minutes: 30  # Windows takes 10 minutes, and took 16 on a slow runner
+    steps: *prepare
 
   lowest:
-    # The lowest versions sift names of what it depends on, on the oldest Python: what sift claims to run with.
+    env:
+      PYTHON: "3.12"
+      SESSION: lowest
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false  # no step after it pushes with git
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
-        with:
-          python-version: "3.11"
-          activate-environment: true
-          enable-cache: true
-      - run: uv pip install --resolution lowest-direct --torch-backend cpu -e ".[dev]"
-      - run: python scripts/floors.py
-      - run: pytest -q -n auto
+    steps: *prepare
+
+  oldest:
+    # Python 3.12.0 itself, the first release sift supports: uv's own build of it, never the runner's newer 3.12.
+    env:
+      PYTHON: "3.12.0"
+      SESSION: oldest
+      UV_PYTHON_PREFERENCE: only-managed
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps: *prepare
+
+  kernel:
+    # The crate's own tests and the tests of Python that reach it, with every line of the crate run by one of them.
+    env:
+      PYTHON: "3.12"
+      SESSION: kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps: *prepare
+
+  wheels:
+    # What a release would publish, built as it would build it: no release builds a wheel for the first time.
+    needs: [lint, types, first]
+    # zizmor asks for GitHub's newer form, `$/.github/workflows/wheels.yml`, which actionlint 1.7.12, the newest,
+    # refuses: `./` it is, as GitHub has taken it since 2022, until both read the newer one.
+    uses: ./.github/workflows/wheels.yml  # zizmor: ignore[self-repository]
 
   tests:
-    # One check for the whole matrix and the lowest versions: required in place of each job by name, it lets the
-    # matrix change.
+    # One required check for the whole matrix, the lowest versions, the first Python, the crate and the wheels, so
+    # that the matrix may change.
     if: always()
-    needs: [first, test, lowest]
+    needs: [first, test, lowest, oldest, kernel, wheels]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every job of the matrix passed, and that of the lowest versions
+      - name: Every job of the matrix passed, and those of the lowest versions, the first Python, the crate, the wheels
         env:
           FIRST: ${{ needs.first.result }}
           REST: ${{ needs.test.result }}
           LOWEST: ${{ needs.lowest.result }}
-        run: test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success
+          OLDEST: ${{ needs.oldest.result }}
+          KERNEL: ${{ needs.kernel.result }}
+          WHEELS: ${{ needs.wheels.result }}
+        run: >-
+          test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success &&
+          test "$OLDEST" = success && test "$KERNEL" = success && test "$WHEELS" = success
 
   package:
-    # Builds the package and checks it as PyPI and users will see it.
+    env:
+      PYTHON: "3.12"
+      SESSION: package
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false  # no step after it pushes with git
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
-        with:
-          version: "0.13.9"  # the uv the release builds with
-          python-version: "3.12"
-      - run: uv run --no-project scripts/package.py  # as the gate checks it
+    steps: *prepare

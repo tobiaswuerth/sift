@@ -1,0 +1,130 @@
+import dataclasses
+from pathlib import Path
+from typing import cast, get_type_hints
+
+import pytest
+
+from sift.api.collections import AddCollection, Audience, ShowStatus
+from sift.api.documents import GetDocuments, WantedDocument
+from sift.api.embedding import CollectionEmbedded, EmbedCollections, Embedded, EmbedResult
+from sift.api.errors import InvalidRequestError, ModelUnavailableError, NotFoundError
+from sift.api.links import FindMentions, FindSimilar, ShowLinks
+from sift.api.reindexing import ReindexFiles
+from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
+from sift.api.serving import WorkerAddress
+from sift.app.collections import add
+from sift.app.embedding import embed
+from sift.inference.loading import Deferred
+from sift.inference.remote import Remote
+from sift.interfaces.acts import collections, indexing, jobs, links, searching
+from sift.interfaces.acts.acting import Act, Acting, fresh_models
+from sift.interfaces.acts.collections import GET, STATUS
+from sift.interfaces.acts.indexing import REINDEX
+from sift.interfaces.acts.links import LINKS
+from sift.interfaces.acts.searching import MENTIONS, QUERY, SEARCH, SIMILAR, VSEARCH
+from sift.interfaces.server.handled import HANDLED, for_agents, for_pages
+from sift.settings import Settings
+from tests.files import write
+from tests.homes import collection, indexed, quiet
+from tests.models import Hashed
+from tests.serving import VERSION
+from tests.workers import LOOPBACK, nobody_listens
+
+ACTS: list[Act[object, object]] = [
+    value
+    for module in (collections, indexing, jobs, links, searching)
+    for value in cast("dict[str, object]", vars(module)).values()
+    if isinstance(value, Act)
+]
+
+
+def test_every_act_served_names_the_answer_its_run_gives() -> None:
+    assert sorted(act.name for act in ACTS) == sorted({*for_agents(HANDLED), *for_pages(HANDLED)})
+    assert [act.name for act in ACTS if act.answer != get_type_hints(act.run)["return"]] == []
+
+
+@pytest.fixture
+def agents(tmp_path: Path) -> Acting:
+    home = tmp_path / "home"
+    collection(tmp_path, home, "open", {"Plan.md": "Note: the plan of Kestrel.\n"})
+    write(tmp_path / "hidden" / "Secret.md", "Note: Kestrel is the secret project.\n")
+    add(home, AddCollection(str(tmp_path / "hidden"), agents=False))
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
+    settings = Settings(home=home, user=None, cwd=tmp_path)
+    return Acting(settings, quiet, float, Hashed, Audience.AGENTS)
+
+
+def _hits(result: object) -> list[str]:
+    assert isinstance(result, SearchResult)
+    return [hit.id for hit in result.hits]
+
+
+def test_every_act_an_agent_reaches_keeps_to_the_collections_it_may_see(agents: Acting) -> None:
+    searched = (
+        SEARCH.run(agents, SearchKeywords("Kestrel")),
+        VSEARCH.run(agents, SearchVectors("Kestrel")),
+        QUERY.run(agents, SearchHybrid("Kestrel")),
+    )
+    assert [_hits(each) for each in searched] == [["open/Plan.md"]] * 3
+    assert [one.name for one in STATUS.run(agents, ShowStatus()).collections] == ["open"]
+    assert GET.run(agents, GetDocuments((WantedDocument("hidden/Secret.md"),))).found == ()
+    hidden = "hidden/Secret.md"
+    asked_of = (
+        lambda: LINKS.run(agents, ShowLinks(hidden)),
+        lambda: SIMILAR.run(agents, FindSimilar(hidden)),
+        lambda: MENTIONS.run(agents, FindMentions(hidden)),
+    )
+    for each in asked_of:
+        with pytest.raises(NotFoundError):
+            each()
+
+
+def test_an_agent_reindexes_files_it_may_see_and_their_passages_are_embedded(agents: Acting, tmp_path: Path) -> None:
+    write(tmp_path / "open" / "Plan.md", "Note: the plan of Osprey.\n")
+    done = REINDEX.run(agents, ReindexFiles(("open/Plan.md",)))
+    assert [(one.name, [(each.id, each.state) for each in one.named]) for one in done.indexed.collections] == [
+        ("open", [("open/Plan.md", "changed")])
+    ]
+    assert done.embedded == EmbedResult((CollectionEmbedded("open", Embedded(1, 0)),))
+    assert _hits(VSEARCH.run(agents, SearchVectors("Osprey", k=1))) == ["open/Plan.md"]
+    with pytest.raises(InvalidRequestError):
+        REINDEX.run(agents, ReindexFiles((str(tmp_path / "hidden" / "Secret.md"),)))
+
+
+def test_files_of_a_collection_never_embedded_are_indexed_alone(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    collection(tmp_path, home, "plain", {"a.md": "Note: alpha.\n"})
+    indexed(home)
+    acting = Acting(Settings(home=home, user=None, cwd=tmp_path), quiet, float, Hashed, Audience.AGENTS)
+    done = REINDEX.run(acting, ReindexFiles(("plain/a.md",)))
+    assert (len(done.indexed.collections), done.embedded) == (1, None)
+
+
+def test_files_reindexed_while_the_worker_cannot_be_reached_are_indexed_and_the_embedding_said_to_fail(
+    agents: Acting, tmp_path: Path
+) -> None:
+    unreachable = Remote(WorkerAddress(LOOPBACK, nobody_listens(), "t", "p"), VERSION)
+    write(tmp_path / "open" / "Plan.md", "Note: the plan of Osprey.\n")
+    with pytest.raises(ModelUnavailableError, match="is unreachable or failed"):
+        REINDEX.run(dataclasses.replace(agents, models=lambda: unreachable), ReindexFiles(("open/Plan.md",)))
+    assert _hits(SEARCH.run(agents, SearchKeywords("Osprey"))) == ["open/Plan.md"]
+
+
+def test_files_reindexed_in_a_collection_never_embedded_never_ask_the_models(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    collection(tmp_path, home, "plain", {"a.md": "Note: alpha.\n"})
+    indexed(home)
+    unreachable = Remote(WorkerAddress(LOOPBACK, nobody_listens(), "t", "p"), VERSION)
+    settings = Settings(home=home, user=None, cwd=tmp_path)
+    acting = Acting(settings, quiet, float, lambda: unreachable, Audience.AGENTS)
+    assert REINDEX.run(acting, ReindexFiles(("plain/a.md",))).embedded is None
+
+
+def test_the_models_are_this_machine_s_unless_a_worker_is_named(tmp_path: Path) -> None:
+    here = Settings(home=tmp_path, user=None, cwd=tmp_path)
+    there = dataclasses.replace(here, embed_remote=WorkerAddress("workstation", 8766, "t", "p"))
+    local, remote = fresh_models(here), fresh_models(there)
+    assert isinstance(local, Deferred)
+    assert isinstance(remote, Remote)
+    assert ((local.model, local.reranker), remote.worker) == ((here.embed_model, here.rerank_model), there.embed_remote)

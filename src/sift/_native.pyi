@@ -1,0 +1,73 @@
+from collections.abc import Sequence
+from typing import Self
+
+import numpy as np
+from numpy.typing import NDArray
+
+type PackRow = tuple[int, str, bytes, bytes]
+type RangedRow = tuple[int, str, int, bytes]
+type ListBlockRow = tuple[int, str, int, bytes, bytes]
+type Listed = tuple[list[PackRow], list[RangedRow], list[ListBlockRow]]
+type Occurring = tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]
+
+class Words:
+    def __new__(cls, stored: bytes, /) -> Self: ...
+    def building(self, most: int, most_field: int, /) -> Building: ...
+
+class Building:
+    def add(
+        self, places: NDArray[np.int64], of: Sequence[int], fields: Sequence[tuple[str, str]], texts: Sequence[str], /
+    ) -> int: ...
+    def written(
+        self, segment: int, average: float, shape: tuple[int, int, int, int], /
+    ) -> tuple[Listed, list[tuple[int, int, bytes]]]: ...
+
+class Merger:
+    def __new__(
+        cls,
+        live: NDArray[np.int64],
+        lengths: NDArray[np.int64],
+        dead: NDArray[np.int64],
+        average: float,
+        shape: tuple[int, int, int, int],
+        limits: tuple[int, int, int],
+        sources: int,
+        /,
+    ) -> Self: ...
+    def feed(self, source: int, rows: Sequence[tuple[object, ...]], /) -> bool: ...
+    def feed_packs(self, source: int, rows: Sequence[tuple[object, ...]], /) -> bool: ...
+    def step(self, segment: int, /) -> tuple[Listed, list[int], bool]: ...
+
+def gathered(building: Building, /) -> tuple[int | None, int | None, int, int]: ...
+def unpacked(
+    first: str, lists: bytes, places: bytes | None, terms: Sequence[str], /
+) -> list[tuple[str, int, bytes | None, bytes | None]]: ...
+def within(
+    first: str, lists: bytes, low: str, high: str | None, /
+) -> list[tuple[str, int, bytes | None, bytes | None]]: ...
+def counted(rows: Sequence[tuple[str, bytes]], low: str, high: str | None, /) -> list[tuple[str, int]]: ...
+def blocked_all(each: Sequence[bytes], /) -> tuple[bytes, bytes, list[int]]: ...
+def blocked_within(
+    each: Sequence[bytes],
+    numbers: Sequence[int],
+    ids: NDArray[np.int64],
+    ends: NDArray[np.int64],
+    shape: tuple[int, int, int, int],
+    /,
+) -> list[tuple[bytes, bytes]]: ...
+def nearest_centroids(held: NDArray[np.uint64], centroids: NDArray[np.uint64], width: int, /) -> bytes: ...
+def majority_centroids(
+    held: NDArray[np.uint64], assigned: NDArray[np.int64], centroids: NDArray[np.uint64], width: int, /
+) -> bytes: ...
+def phrase_counts(candidates: NDArray[np.int64], words: Sequence[Occurring], /) -> bytes: ...
+def summed_by_id(ids: NDArray[np.int64], counts: NDArray[np.int64], /) -> tuple[bytes, bytes]: ...
+def with_lengths(ids: NDArray[np.int64], lengths: NDArray[np.int64], shift: int, /) -> list[tuple[int, bytes]]: ...
+def lengths_all(each: Sequence[bytes], shift: int, /) -> bytes: ...
+def occurrences(
+    each: Sequence[bytes],
+    bounds: Sequence[int],
+    ids: NDArray[np.int64],
+    counts: NDArray[np.int64],
+    wanted: NDArray[np.int64],
+    /,
+) -> tuple[bytes, bytes, bytes]: ...

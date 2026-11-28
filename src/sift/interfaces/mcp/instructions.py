@@ -1,0 +1,68 @@
+import re
+from collections.abc import Sequence
+
+from sift.api.collections import CollectionStatus, Counted, Status
+from sift.api.errors import SiftError
+from sift.domain.text.wording import counted
+
+HOW = """Search the user's local documents and notes, indexed by sift. When a task touches what the collections
+below cover, search here before answering from memory or the web. Cite ids; say so when nothing relevant turns up.
+
+Pick by what you have:
+- A question, topic or description: `search` (hybrid: keywords and meaning, reranked). The default.
+- An exact string, e.g. a version "3.12.4", an error code, identifier, name, DOI or "quoted phrase": `search` with
+  mode keyword.
+- An idea whose wording you can't guess: `search` with mode semantic.
+- A document or note: `related` for more like it, its links, backlinks or unlinked mentions; `get` for its text.
+
+Research in rounds; one search is rarely enough:
+1. Survey: one call with several phrasings, query=["...", "...", "..."] (up to 20), with compact: true, k: 30,
+   adaptive: true: hits without their text, so many fit.
+2. Read: `get` the 3 or so best in one call, with their lines: documents=[{"id": "...", "first_line": 17,
+   "last_line": 26}, ...].
+3. Dig: `related` on the best one; search again with the terms and names the hits use.
+4. Stop when a round returns only documents you have seen; then answer.
+
+Narrow any search with `collections`, a `path` glob, `filters` on front matter and `sort`. Scores rank one call's
+hits alone. After writing or deleting a file of a collection, `reindex` it."""
+NONE_YET = "No collections are indexed yet."
+UNLISTED = "sift cannot list the collections now: {message}; fix: {remedy}"
+LISTED = "Indexed collections (the tool `collections` lists them, with their fields and the jobs running):"
+PLAIN_FIELD = re.compile(r"[\w.-]{1,40}")
+CLIENTS_KEEP = 2_048
+FIELDS_NAMED = (30, 8, 0)
+
+
+def _fields(names: Sequence[str], most: int) -> str:
+    plain = [name for name in names if PLAIN_FIELD.fullmatch(name)][:most]
+    more = len(names) - len(plain)
+    if not plain:
+        return counted(more, "field")
+    return ", ".join(plain) + (f" and {more:,} more" if more else "")
+
+
+def _line(one: CollectionStatus, most_fields: int) -> str:
+    contents = one.contents
+    if not isinstance(contents, Counted):
+        return f"- {one.name} ({one.folder}): {contents.message}"
+    said = f"- {one.name} ({one.folder}): {counted(contents.documents, 'document')}"
+    if contents.fields and most_fields:
+        said += f"; front matter: {_fields(contents.fields, most_fields)}"
+    if contents.links:
+        said += f"; {counted(contents.links, 'link')}, {contents.unresolved:,} unresolved"
+    return said if one.active else f"{said}; inactive: not searched"
+
+
+def _listed(status: Status, most_fields: int) -> str:
+    return f"{HOW}\n\n{LISTED}\n" + "\n".join(_line(one, most_fields) for one in status.collections)
+
+
+def unlisted(error: SiftError) -> str:
+    return f"{HOW}\n\n{UNLISTED.format(message=error.message, remedy=error.remedy)}"
+
+
+def instructions(status: Status) -> str:
+    if not status.collections:
+        return f"{HOW}\n\n{NONE_YET}"
+    fitting = (told for most in FIELDS_NAMED if len(told := _listed(status, most)) <= CLIENTS_KEEP)
+    return next(fitting, _listed(status, 0))

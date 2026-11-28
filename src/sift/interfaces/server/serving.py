@@ -1,0 +1,281 @@
+import asyncio
+import logging
+import os
+import secrets
+import signal
+import socket
+import threading
+import time
+from collections.abc import Callable, Coroutine, Generator, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, contextmanager
+from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
+from types import FrameType
+from typing import cast, override
+
+import uvicorn
+
+from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
+from sift.api.events import Listening, Noted, Reporter
+from sift.api.serving import Served, ServeHome
+from sift.api.wire import CONTRACT
+from sift.app.kept_decoded import KeptDecoded
+from sift.app.questions import RememberedQuestions
+from sift.app.resident import ResidentCodes
+from sift.interfaces.acts.acting import fresh_models
+from sift.interfaces.server.activity import Activity
+from sift.interfaces.server.app import ALIVE_SECONDS, BODY_SECONDS, LOGGER, Serving
+from sift.interfaces.server.endpoint import SERVER, SERVING, Endpoint, found, own_endpoint, written
+from sift.interfaces.server.handled import HANDLED, Handled
+from sift.interfaces.server.heads import HeadsInTime
+from sift.interfaces.server.results import KeptResults
+from sift.interfaces.server.routes import served_app
+from sift.settings import Settings, acting_on
+from sift.storage.database import private_folder
+from sift.storage.watching import HomeWatch
+from sift.storage.writer import sole_writer
+
+LOCALHOST = "127.0.0.1"
+WORKERS = 32
+ANOTHER_REMEDY = "commands are sent to it as they are; stop it to start another"
+PORT_REMEDY = "give another port, or 0 for any free one"
+IDLE_CHECK_SECONDS = 30.0
+STOP_SECONDS = 5.0
+GRACE_SECONDS = 10
+KEEP_ALIVE_SECONDS = 5
+MOST_CONNECTIONS = 256
+STOPPING = "stopping: {jobs} stops at its next step; what it wrote so far is kept"
+RESTED = "the models were idle: they wait in RAM, off the GPU, until used again"
+LEFT_IDLE = "stopped: no request and no job for {seconds:,} s, as --idle-exit asks"
+NOT_RESTED = "the idle models could not be let go; they are tried again"
+UNLISTING_FAILED = "the endpoint file %s could not be removed: %s"
+STOPPING_FAILED = "what the home process does first on stopping failed"
+STOPPING_SIGNALS: tuple[int, ...] = tuple(
+    cast("int", getattr(signal, name)) for name in ("SIGTERM", "SIGBREAK") if hasattr(signal, name)
+)
+
+
+def _unlisted(listed: Path) -> None:
+    try:
+        listed.unlink(missing_ok=True)
+    except OSError as error:
+        logging.getLogger(LOGGER).warning(UNLISTING_FAILED, listed, error.strerror or error)
+
+
+def _stopping(serving: Serving, listed: Path, report: Reporter) -> None:
+    if stopped := serving.jobs.stop_all():
+        jobs = ", ".join(f"sift {job.command} (job {job.number})" for job in stopped)
+        report(Noted(STOPPING.format(jobs=jobs)))
+    _unlisted(listed)
+
+
+class StoppingServer(uvicorn.Server):
+    def __init__(self, config: uvicorn.Config, on_first_exit: Callable[[], None]) -> None:
+        super().__init__(config)
+        self.on_first_exit: Callable[[], None] = on_first_exit
+
+    @override
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        try:
+            if not self.should_exit:
+                self.on_first_exit()
+        except RecursionError:
+            raise
+        except Exception:
+            logging.getLogger(LOGGER).exception(STOPPING_FAILED)
+        finally:
+            super().handle_exit(sig, frame)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class HomeServer:
+    endpoint: Endpoint
+    serving: Serving
+    server: StoppingServer
+    socket: socket.socket
+    listed: Path
+
+    @property
+    def url(self) -> str:
+        return f"http://{LOCALHOST}:{self.endpoint.port}"
+
+
+def _refuse_another(settings: Settings) -> None:
+    another = found(settings)
+    if another is not None:
+        said = f"another sift serves this home on port {another.port} (process {another.pid})"
+        raise StoreUnavailableError(said, ANOTHER_REMEDY, code=Problem.BUSY)
+
+
+def bound(port: int, host: str = LOCALHOST) -> socket.socket:
+    try:
+        return socket.create_server((host, port))
+    except OSError as error:
+        raise InvalidRequestError(
+            f"port {port} cannot be had: {error.strerror or error}", PORT_REMEDY, "port"
+        ) from None
+
+
+def watched_idle(release: Callable[[], bool], stop: threading.Event, every: float = IDLE_CHECK_SECONDS) -> None:
+    while not stop.wait(every):
+        try:
+            if release():
+                logging.getLogger(LOGGER).info(RESTED)
+        except RecursionError:
+            raise
+        except Exception:
+            logging.getLogger(LOGGER).exception(NOT_RESTED)
+
+
+@contextmanager
+def resting(release: Callable[[], bool], every: float = IDLE_CHECK_SECONDS) -> Generator[None]:
+    stop = threading.Event()
+    watch = threading.Thread(target=watched_idle, args=(release, stop, every), name="sift-idle", daemon=True)
+    watch.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        watch.join(STOP_SECONDS)
+
+
+def on_a_selector[T](work: Coroutine[object, object, T]) -> T:
+    return asyncio.run(work, loop_factory=asyncio.SelectorEventLoop)
+
+
+def served_until_stopped(running: HomeServer) -> None:
+    on_a_selector(running.server.serve(sockets=[running.socket]))
+
+
+@dataclass(frozen=True, slots=True)
+class Serve:
+    run: Callable[[HomeServer], None] = served_until_stopped
+    handled: Mapping[str, Handled] = HANDLED
+    alive_every: float = ALIVE_SECONDS
+    grace_seconds: int = GRACE_SECONDS
+    clock: Callable[[], float] = time.perf_counter
+    idle_every: float = IDLE_CHECK_SECONDS
+    keep_alive_seconds: int = KEEP_ALIVE_SECONDS
+    body_seconds: float = BODY_SECONDS
+    most_connections: int = MOST_CONNECTIONS
+
+
+SERVE = Serve()
+
+
+@contextmanager
+def reading_pool(workers: int) -> Generator[ThreadPoolExecutor]:
+    pool = ThreadPoolExecutor(workers, thread_name_prefix="sift-serve")
+    try:
+        yield pool
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+@contextmanager
+def held(
+    settings: Settings, request: ServeHome, version: str, report: Reporter, how: Serve = SERVE
+) -> Generator[HomeServer]:
+    private_folder(settings.home)
+    listed = own_endpoint(settings)
+    _refuse_another(settings)
+    with (
+        closing(fresh_models(settings)) as models,
+        sole_writer(settings.home / SERVER, SERVING),
+        bound(request.port) as listening,
+        reading_pool(WORKERS) as pool,
+        ThreadPoolExecutor(1, thread_name_prefix="sift-write") as writer,
+        resting(models.release_idle),
+    ):
+        listed.unlink(missing_ok=True)
+        port = cast("tuple[str, int]", listening.getsockname())[1]
+        endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version, acting_on(settings), CONTRACT)
+        kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
+        activity = Activity(how.clock)
+        serving = Serving(
+            settings,
+            endpoint.token,
+            version,
+            *kept,
+            writer,
+            pool,
+            activity,
+            how.alive_every,
+            how.body_seconds,
+            clock=how.clock,
+        )
+        app = served_app(serving, how.handled)
+        config = uvicorn.Config(
+            app,
+            http=HeadsInTime,
+            log_config=None,
+            access_log=False,
+            lifespan="off",
+            timeout_graceful_shutdown=how.grace_seconds,
+            timeout_keep_alive=how.keep_alive_seconds,
+            limit_concurrency=how.most_connections,
+        )
+        written(listed, endpoint)
+        server = StoppingServer(config, partial(_stopping, serving, listed, report))
+        try:
+            yield HomeServer(endpoint, serving, server, listening, listed)
+        finally:
+            _unlisted(listed)
+            serving.watch.let_go()
+
+
+def _interrupted(_signal: int, _frame: FrameType | None) -> None:
+    raise KeyboardInterrupt
+
+
+@contextmanager
+def stopped_as_by_ctrl_c() -> Generator[None]:
+    kept = {each: signal.signal(each, _interrupted) for each in STOPPING_SIGNALS}
+    try:
+        yield
+    finally:
+        for each, handler in kept.items():
+            signal.signal(each, handler)
+
+
+def watched_leaving(running: HomeServer, seconds: int, stop: threading.Event, every: float) -> None:
+    serving = running.serving
+    while not stop.wait(every):
+        if serving.activity.idle_for() >= seconds and not serving.jobs.listed():
+            logging.getLogger(LOGGER).info(LEFT_IDLE.format(seconds=seconds))
+            _unlisted(running.listed)
+            running.server.should_exit = True
+            return
+
+
+@contextmanager
+def _leaving_when_idle(running: HomeServer, seconds: int | None, every: float) -> Generator[None]:
+    if seconds is None:
+        yield
+        return
+    stop = threading.Event()
+    args = (running, seconds, stop, every)
+    watch = threading.Thread(target=watched_leaving, args=args, name="sift-leaving", daemon=True)
+    watch.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        watch.join(STOP_SECONDS)
+
+
+def serve(settings: Settings, request: ServeHome, version: str, report: Reporter, how: Serve = SERVE) -> Served:
+    with (
+        stopped_as_by_ctrl_c(),
+        held(settings, request, version, report, how) as running,
+        _leaving_when_idle(running, request.idle_exit, how.idle_every),
+    ):
+        try:
+            report(Listening(running.url, str(settings.home)))
+            how.run(running)
+        except KeyboardInterrupt:
+            running.server.should_exit = True
+            _stopping(running.serving, running.listed, report)
+    return Served(running.url)

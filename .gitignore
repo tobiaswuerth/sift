@@ -5,9 +5,16 @@ __pycache__/
 build/
 dist/
 
+# The extension, as cargo and maturin build it
+native/target/
+src/sift/_native.*.pyd
+src/sift/_native.pyd
+src/sift/_native*.so
+src/sift/_native*.pdb
+
 # Environments
 .venv/
-.venv-newest/
+.nox/
 venv/
 .env
 
@@ -15,6 +22,7 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
 
 # Editors and OS
@@ -25,3 +33,7 @@ Thumbs.db
 
 # Local sift index, if SIFT_HOME points into the repo
 .sift/
+
+# Local notes and reports, never committed
+reports/
+research_notes/
