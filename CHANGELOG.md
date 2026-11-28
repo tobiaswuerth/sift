@@ -21,6 +21,8 @@ versions follow [Semantic Versioning](https://semver.org/). Releases before 2.0 
 - Over MCP, the queries of one `search` call run at the same time instead of one after another, each within the
   call's whole budget, and questions waiting to be embedded reach the model together: a call of several queries
   takes about half as long.
+- A search reads the vectors, passages and texts it needs ahead on a few connections of its own at once, then reads
+  them in its own transaction: rows not yet in memory are waited for side by side instead of one after another.
 
 ## [2.0.0] - 2026-11-28
 

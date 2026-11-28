@@ -172,8 +172,8 @@ Generated from the code by `python -m tools limits --write`; a test checks that 
 | `sift.storage.documents` | `MOST_DESCRIPTION_BYTES` | `512 << 20` |
 | `sift.storage.kept_vectors` | `KEY_BYTES` | `16` |
 | `sift.storage.keyword_lists` | `MOST_POINT` | `0x10FFFF` |
-| `sift.storage.keyword_reads` | `WAITED_SECONDS` | `600.0` |
 | `sift.storage.keywords` | `MOST_ROW` | `(1 << 63) - 1` |
+| `sift.storage.readers` | `WAITED_SECONDS` | `600.0` |
 | `sift.storage.writer` | `MOMENT_SECONDS` | `0.5` |
 | `sift.storage.writer` | `ASK_AGAIN_SECONDS` | `0.05` |
 | `native::hamming` | `WORD_BYTES` | `8` |
