@@ -89,3 +89,21 @@ def test_a_generic_class_called_with_its_type_arguments_is_found(called: str) ->
 )
 def test_a_builtin_container_called_with_its_type_arguments_or_a_plain_call_is_no_problem(called: str) -> None:
     assert problems("src/sift/app/a.py", f"import collections\nx = {called}\n") == []
+
+
+PAINTED = (
+    "from sift.interfaces.console.style import Tone, paint\n"
+    "from sift.interfaces.console.text import labelled, printable\n\n"
+    "a = labelled('set', f'{held}  {paint(HINT, Tone.SECONDARY, style)}')\n"
+    "b = printable(paint(HINT, Tone.SECONDARY, style))\n"
+    "c = labelled('set', held, text=paint(HINT, None))\n"
+    "d = labelled('set', held) + '  ' + paint(HINT, Tone.SECONDARY, style)\n"
+    "e = labelled('done', held, Tone.DONE, style)\n"
+)
+
+
+def test_a_painted_text_handed_to_what_escapes_control_characters_is_found_with_its_fix() -> None:
+    found = check_idioms.idioms("src/sift/interfaces/a.py", PAINTED)
+    assert [finding.line for finding in found] == [4, 5, 6]
+    assert found[0].problem.startswith("a painted text handed to labelled() or printable(), which escape")
+    assert check_idioms.idioms("tests/a.py", PAINTED) == ()

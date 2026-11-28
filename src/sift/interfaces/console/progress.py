@@ -125,7 +125,7 @@ def _lent(lending: Lending, looks: Looks) -> tuple[str, ...]:
     remote = f"{EMBED_REMOTE_VARIABLE}=https://{key}@{machine}:{lending.port}"
     return (
         labelled("lend", f"https://{machine}:{lending.port}", Tone.STRONG, style),
-        labelled("set", f"{remote}  {paint(SET_ELSEWHERE, Tone.SECONDARY, style)}"),
+        labelled("set", remote) + f"  {paint(SET_ELSEWHERE, Tone.SECONDARY, style)}",
         labelled("keep", KEEP_THE_KEY, Tone.WARNING, style),
         labelled("stop", LENDING_STOP_HINT),
     )

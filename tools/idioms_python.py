@@ -8,6 +8,12 @@ GENERIC_CALLED = (
     "a generic class called with its type arguments, which Python 3.12.0 fails on for a frozen slotted dataclass, "
     "as typing sets __orig_class__ on what it made: call the class alone and annotate what receives it"
 )
+ESCAPERS = frozenset({"labelled", "printable", "printable_text"})
+PAINTERS = frozenset({"paint"})
+PAINTED_ESCAPED = (
+    "a painted text handed to labelled() or printable(), which escape its colour's control characters, so the "
+    "terminal shows them as text (\\x1b[2m...): escape the rest first, then add the painted part"
+)
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 TLS_CONTEXT = "ssl.SSLContext"
 TLS_FLOORS = frozenset({"ssl.TLSVersion.TLSv1_2", "ssl.TLSVersion.TLSv1_3"})
@@ -27,6 +33,22 @@ def generics_called(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Subscript) and _class_named(node.func.value):
             yield Finding(path, node.lineno, GENERIC_CALLED)
+
+
+def _last_name(call: ast.Call) -> str:
+    return ast.unparse(call.func).rsplit(".", 1)[-1]
+
+
+def _painted(node: ast.AST) -> bool:
+    return any(isinstance(inner, ast.Call) and _last_name(inner) in PAINTERS for inner in ast.walk(node))
+
+
+def painted_escaped(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _last_name(node) in ESCAPERS:
+            given = [*node.args, *(keyword.value for keyword in node.keywords)]
+            if any(map(_painted, given)):
+                yield Finding(path, node.lineno, PAINTED_ESCAPED)
 
 
 def _placed(node: ast.AST, scope: ast.AST) -> Iterator[tuple[ast.AST, ast.AST]]:
