@@ -97,7 +97,10 @@ def test_a_filter_built_from_values_means_what_the_written_filter_means(
 def test_a_range_of_a_number_too_large_or_not_finite_is_refused_or_kept_as_text() -> None:
     with pytest.raises(InvalidRequestError, match="is too large"):
         Filter("n", Operator.AT_LEAST, (str(2**63),))
-    assert Filter("n", Operator.AT_LEAST, ("1e999",)).values == ("1e999",)
+    with pytest.raises(InvalidRequestError, match="is too small"):
+        Filter("n", Operator.AT_LEAST, (str(-(2**63) - 1),))
+    with pytest.raises(InvalidRequestError, match=r"'n': 1e999 is no finite number"):
+        Filter("n", Operator.AT_LEAST, ("1e999",))
     assert Filter("n", Operator.AT_LEAST, ("NaN",)).values == ("NaN",)
     assert Filter("n", Operator.AT_LEAST, ("true",)).values == ("true",)
 

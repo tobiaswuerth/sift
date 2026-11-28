@@ -52,14 +52,16 @@ class Filter:
         _refuse_too_long(field, cast("tuple[object, ...]", self.values))
         object.__setattr__(self, "field", unicodedata.normalize("NFC", field))
         values = tuple(
-            _meant(value, ranged=self.operator not in SETS) for value in cast("tuple[object, ...]", self.values)
+            _meant(value, self.field, ranged=self.operator not in SETS)
+            for value in cast("tuple[object, ...]", self.values)
         )
         object.__setattr__(self, "values", values)
         for value in values:
             if not isinstance(value, str | int | float):
                 raise _wrong(f"the filter on {self.field!r}: {value!r} is no text, number, true or false", "values")
             if isinstance(value, int) and not isinstance(value, bool) and not -MOST_INTEGER <= value < MOST_INTEGER:
-                raise _wrong(f"the filter on {self.field!r}: {shown_value(value)} is too large", "values")
+                size = "large" if value > 0 else "small"
+                raise _wrong(f"the filter on {self.field!r}: {shown_value(value)} is too {size}", "values")
             if isinstance(value, float) and not math.isfinite(value):
                 raise _wrong(f"the filter on {self.field!r}: {value} is no finite number", "values")
 
@@ -77,20 +79,25 @@ def _refuse_too_long(field: str, values: tuple[object, ...]) -> None:
         )
 
 
-def _number_in(text: str) -> object:
+def _no_constant(name: str) -> object:
+    raise ValueError(name)
+
+
+def _number_in(text: str, field: str) -> object:
     try:
-        read = cast("object", json.loads(text))
+        read = cast("object", json.loads(text, parse_constant=_no_constant))
     except ValueError:
         return text
-    finite = isinstance(read, int | float) and not isinstance(read, bool) and math.isfinite(read)
-    return read if finite else text
+    if isinstance(read, float) and not math.isfinite(read):
+        raise _wrong(f"the filter on {field!r}: {text[:40]} is no finite number", "values")
+    return read if isinstance(read, int | float) and not isinstance(read, bool) else text
 
 
-def _meant(value: object, *, ranged: bool) -> object:
+def _meant(value: object, field: str, *, ranged: bool) -> object:
     if not isinstance(value, str):
         return value
     text = unicodedata.normalize("NFC", value)
-    return _number_in(text) if ranged else text
+    return _number_in(text, field) if ranged else text
 
 
 def _wrong(problem: str, part: str) -> InvalidRequestError:
