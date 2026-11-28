@@ -137,14 +137,6 @@ def test_a_store_damaged_where_it_is_read_is_refused(tmp_path: Path) -> None:
         open_store(tmp_path / "s.sqlite", COLLECTION)
 
 
-def test_an_error_that_is_no_damage_is_raised_as_it_is(tmp_path: Path) -> None:
-    create_store(tmp_path / "s.sqlite", COLLECTION)
-    with contextlib.closing(connect(tmp_path / "s.sqlite", create=False)) as connection, writing(connection) as tx:
-        run(tx, "DROP TABLE meta")
-    with pytest.raises(sqlite3.OperationalError, match="no such table: meta"):
-        open_store(tmp_path / "s.sqlite", COLLECTION)
-
-
 def test_a_store_is_never_made_over_a_file_that_is_there(tmp_path: Path) -> None:
     (tmp_path / "s.sqlite").write_bytes(b"someone's")
     with pytest.raises(FileExistsError):
@@ -351,3 +343,25 @@ def test_a_store_that_may_only_be_read_is_read_and_left_as_it_was_unless_it_is_o
             pass
     finally:
         path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+@pytest.mark.parametrize(
+    "sql, lacked",
+    [
+        ("DROP TABLE meta", "it lacks the table meta"),
+        ("DROP TABLE links", "it lacks the table links"),
+        ("DROP TRIGGER chunks_added", "it lacks the trigger chunks_added"),
+        ("DROP VIEW keyword_documents", "it lacks the view keyword_documents"),
+        ("DELETE FROM counts", "it lacks its counts"),
+    ],
+)
+def test_a_store_lacking_what_its_layout_makes_is_damaged(tmp_path: Path, sql: str, lacked: str) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    with contextlib.closing(connect(path, create=False)) as connection, writing(connection) as transaction:
+        run(transaction, sql)
+    with pytest.raises(StoreUnavailableError, match=lacked) as refused:
+        open_store(path, COLLECTION)
+    assert (refused.value.code, refused.value.remedy) == (Problem.STORE_DAMAGED, DAMAGED_REMEDY)
+    with pytest.raises(StoreUnavailableError, match=lacked), read_store(path, COLLECTION):
+        pass

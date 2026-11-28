@@ -221,6 +221,8 @@ def _more(home: Path, tmp_path: Path) -> None:
         ("UPDATE keyword_packs SET places = x'0001'", '"halo models"'),
         ("DELETE FROM keyword_lengths", "halo"),
         ("DELETE FROM chunks WHERE document = (SELECT id FROM documents WHERE title = 'Halo')", "halo"),
+        ("DELETE FROM sources", "halo"),
+        ("DROP TABLE meta", "halo"),
     ],
 )
 def test_a_keyword_index_whose_data_is_damaged_is_passed_over_and_the_others_searched(

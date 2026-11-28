@@ -8,6 +8,7 @@ from sift.api.ids import ChunkId, owner
 from sift.api.notices import Notice
 from sift.api.search import Hit, Options, ScoredBy, SearchResult
 from sift.app.searching import Open, Ranked, ScoredChunk, Searching, despite_losses
+from sift.domain.errors import DamagedError
 from sift.domain.query import fields as shown
 from sift.domain.rank.hybrid import standing_out
 from sift.domain.rank.works import one_per_work, work_of_fields
@@ -37,6 +38,8 @@ class Retrieved:
 
 def read(one: Searching, chunks: Sequence[int], scores: Mapping[int, float], *, whole: bool) -> list[Retrieved]:
     held = passages(one.transaction, [ChunkId(chunk) for chunk in chunks])
+    if len(held) < len(set(chunks)):
+        raise DamagedError("a passage the search found is missing from the store")
     documents = sorted({passage.document for passage in held.values()})
     spans = [TextSpan(passage.document, passage.start, passage.length) for passage in held.values()]
     text: list[str | None] = [*spans_text(one.transaction, spans)] if whole else [None] * len(spans)

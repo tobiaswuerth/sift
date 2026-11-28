@@ -325,3 +325,29 @@ def test_a_catalog_of_an_older_layout_is_brought_up_to_date_when_its_collections
     assert known_collections(home) == ()
     with contextlib.closing(read_only(home / CATALOG)) as catalog, reading(catalog) as transaction:
         assert rows(transaction, Version, "PRAGMA user_version") == [Version(len(CATALOG_LAYOUT))]
+
+
+def test_a_catalog_lacking_a_table_is_damaged(home: Path) -> None:
+    with contextlib.closing(open_catalog(home)) as connection, writing(connection) as transaction:
+        run(transaction, "DROP TABLE leftovers")
+    with pytest.raises(StoreUnavailableError, match="it lacks the table leftovers") as read:
+        known_collections(home)
+    with pytest.raises(StoreUnavailableError, match="it lacks the table leftovers") as opened, catalog_of(home):
+        pass
+    assert (read.value.code, opened.value.code) == (Problem.CATALOG_DAMAGED, Problem.CATALOG_DAMAGED)
+
+
+@pytest.mark.parametrize("emptied", ["UPDATE collections SET folder = ''", "UPDATE collections SET store = 'a.sqlite'"])
+def test_a_collection_whose_folder_or_store_is_no_absolute_path_is_damage_of_the_catalog(
+    home: Path, emptied: str
+) -> None:
+    with contextlib.closing(open_catalog(home)) as connection, writing(connection) as transaction:
+        run(
+            transaction,
+            "INSERT INTO collections(name, folder, store, choices) VALUES ('a', ?, ?, '{}')",
+            (str(home / "notes"), str(home / "a.sqlite")),
+        )
+        run(transaction, emptied)
+    with pytest.raises(StoreUnavailableError, match="is no absolute path") as refused:
+        known_collections(home)
+    assert refused.value.code == Problem.CATALOG_DAMAGED

@@ -1,11 +1,15 @@
+import functools
+import sqlite3
 from collections.abc import Callable, Sequence
+from contextlib import closing
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
 
 from sift.api.errors import Problem, StoreUnavailableError
-from sift.storage.database import Count, Reading, Writing, first, rows, run
+from sift.domain.errors import DamagedError
+from sift.storage.database import Count, Reading, Writing, first, rows, run, writing
 
 type Step = str | Callable[[Writing], None]
 
@@ -19,6 +23,7 @@ MARK_SET = "INSERT OR REPLACE INTO compatibility(id, read_from, written_from) VA
 MARK_HELD = "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'compatibility'"
 MARK = "SELECT read_from, written_from FROM compatibility"
 READ_ALONE = "this one can read it, not change it"
+SCHEMA = "SELECT type, name FROM sqlite_schema WHERE name NOT LIKE 'sqlite!_%' ESCAPE '!'"
 
 
 class Older(Enum):
@@ -35,6 +40,11 @@ class Migration:
 
 class Version(NamedTuple):
     number: int
+
+
+class SchemaObject(NamedTuple):
+    type: str
+    name: str
 
 
 class _Marked(NamedTuple):
@@ -85,6 +95,24 @@ def _taken(transaction: Writing, step: Step) -> None:
         run(transaction, step)
     else:
         step(transaction)
+
+
+@functools.cache
+def _made(migrations: tuple[Migration, ...]) -> frozenset[SchemaObject]:
+    with closing(sqlite3.connect(":memory:", isolation_level=None)) as made, writing(made) as transaction:
+        for migration in migrations:
+            for step in migration.steps:
+                _taken(transaction, step)
+        run(transaction, MARK_MADE)
+        return frozenset(rows(transaction, SchemaObject, SCHEMA))
+
+
+def refuse_lacking(transaction: Reading, migrations: Sequence[Migration], found: int) -> None:
+    held = set(rows(transaction, SchemaObject, SCHEMA))
+    lacked = sorted(_made(tuple(migrations[:found])) - held, key=lambda each: (each.type != "table", each))
+    if lacked:
+        kind, name = lacked[0]
+        raise DamagedError(f"it lacks the {kind} {name}")
 
 
 def _last(migrations: Sequence[Migration], needed: frozenset[Older]) -> int:

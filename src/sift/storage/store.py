@@ -7,8 +7,10 @@ from typing import cast
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.domain.codec.shape import SHAPE, Shape
+from sift.domain.errors import DamagedError
 from sift.storage.database import (
     READ_CACHE,
+    Count,
     Reading,
     Value,
     connect,
@@ -17,13 +19,14 @@ from sift.storage.database import (
     private_folder,
     read_only,
     reading,
+    rows,
     run,
     run_each,
     writing,
 )
 from sift.storage.keyword_meta import keyword_meta
 from sift.storage.layout import LAYOUT
-from sift.storage.migrations import Migration, migrated, readable_version, writable_version
+from sift.storage.migrations import Migration, migrated, readable_version, refuse_lacking, writable_version
 from sift.storage.store_files import delete_logs, delete_store
 from sift.storage.unusable import DAMAGED_REMEDY, unavailable_if_unusable
 from sift.storage.writer import sole_writer
@@ -37,6 +40,7 @@ LEFT_BY_ADD = """SELECT (SELECT value FROM meta WHERE key = 'collection') = ?
 
 SCHEMA_HELD = "SELECT count(*) FROM sqlite_schema"
 COLLECTION_HELD = "SELECT value FROM meta WHERE key = 'collection'"
+COUNTED = "SELECT count(*) FROM counts"
 
 
 def _probed(path: Path, sql: str, parameters: tuple[str, ...] = ()) -> tuple[object, ...] | None:
@@ -98,11 +102,15 @@ def _verified(transaction: Reading, path: Path, collection: CollectionId, layout
     found = readable_version(transaction, len(layout), path)
     if found == 0:
         raise StoreUnavailableError(f"{path} is no store of sift", DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
+    refuse_lacking(transaction, layout, found)
     held = first(transaction, Value, COLLECTION_HELD)
     if held is None or held.value != str(collection):
         owner = "no collection" if held is None else f"collection {held.value}"
         said = f"{path} is the store of {owner}, not of collection {collection}"
         raise StoreUnavailableError(said, DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
+    (counted,) = rows(transaction, Count, COUNTED)
+    if counted.n != 1:
+        raise DamagedError("it lacks its counts")
     return found
 
 
