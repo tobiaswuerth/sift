@@ -6,6 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/). Releases before 2.0 
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-28
+
 A rebuild of sift: a new store layout, a keyword index of its own built by a compiled Rust core, and a home process
 that serves agents, the browser and the command line. sift 2 does not open the stores of sift 1.x: bring them in
 once with `sift import`, as [Updating](https://github.com/tobiaswuerth/sift/blob/main/README.md#updating) describes.
@@ -82,4 +84,5 @@ once with `sift import`, as [Updating](https://github.com/tobiaswuerth/sift/blob
   from web pages of other sites, and other sites cannot frame, load or trigger the UI
   ([security policy](https://github.com/tobiaswuerth/sift/blob/main/docs/SECURITY.md)).
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.15.2...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/tobiaswuerth/sift/compare/v1.15.2...v2.0.0

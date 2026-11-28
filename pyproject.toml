@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sift-rag"
-version = "2.0.0a0"
+version = "2.0.0"
 description = "Local RAG search engine and MCP server for AI agents (Claude Code, Cursor, VS Code): hybrid BM25 + semantic search with reranking over Markdown and Obsidian notes, PDF, Office files and emails, fast at millions of passages. Backlinks, metadata filters, browser UI. Runs on your own GPU or CPU: no cloud, no API keys."
 readme = "README.md"
 license = "MIT"
@@ -62,7 +62,7 @@ keywords = [
     "cursor",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Environment :: GPU :: NVIDIA CUDA",
     "Intended Audience :: Developers",
