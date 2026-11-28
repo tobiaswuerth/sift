@@ -1,4 +1,3 @@
-import dataclasses
 import hashlib
 from array import array
 from collections.abc import Iterable, Mapping, Sequence
@@ -19,7 +18,7 @@ from sift.app.filing import READERS, Readers
 from sift.app.indexing import index
 from sift.domain.arrays import Ids, ints
 from sift.domain.text.embedding import embedded
-from sift.inference.hub import COMMIT
+from sift.inference.hub import COMMIT, EMBED_MODEL, pinned
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Connection, reading, writing
 from sift.storage.documents import counts
@@ -40,8 +39,11 @@ TAKEN = "a collection of that name is in this home already, not imported from {h
 TAKEN_REMEDY = "remove it, or import the other collections by name"
 UNPINNED_MODEL = "its vectors are of {model}, which names no whole commit, so they are not carried over"
 UNPINNED_REMEDY = "embed the collection again"
+OTHER_MODEL = "its vectors are of {model}, and sift embeds with {wanted}, so they are not carried over"
+OTHER_MODEL_REMEDY = "embed the collection"
 UNKNOWN = "the sift 1.x home holds no collection {name}"
 UNKNOWN_REMEDY = "name one of its collections, or none to import every one"
+FOLDER_GONE = "its folder is missing: {folder}"
 FOLDER_GONE_REMEDY = (
     "bring its folder back, then import it again: sift reads a collection's files anew, "
     "and the vectors of sift 1.x follow the text it finds"
@@ -108,6 +110,14 @@ def _carried(connection: Connection, old: FormerStore, model: str, report: Repor
     return carried
 
 
+@dataclass(frozen=True, slots=True)
+class _Importing:
+    source: Path
+    report: Reporter
+    readers: Readers
+    embedding: str
+
+
 def _target(former: FormerCollection) -> Path:
     return former.store.with_name(NEW_STORE.format(stem=former.store.stem))
 
@@ -152,13 +162,17 @@ def _placed(home: Path, former: FormerCollection, source: Path) -> Collection:
     return placed
 
 
-def _carry_into(one: Collection, former: FormerCollection, report: Reporter) -> tuple[str | None, int]:
+def _carry_into(one: Collection, former: FormerCollection, asked: _Importing) -> tuple[str | None, int]:
+    report = asked.report
     with former_store(former.store) as old:
         model = old.model()
         if model is None:
             return None, 0
         if COMMIT.fullmatch(model.rpartition("@")[2]) is None:
             report(Noted(UNPINNED_MODEL.format(model=model), UNPINNED_REMEDY))
+            return model, 0
+        if model != pinned(asked.embedding):
+            report(Noted(OTHER_MODEL.format(model=model, wanted=pinned(asked.embedding)), OTHER_MODEL_REMEDY))
             return model, 0
         with sole_writer(one.store, "an import"), connected(one.store, one.id) as connection:
             return model, _carried(connection, old, model, report)
@@ -181,25 +195,26 @@ def _brought(one: Collection, former: FormerCollection, model: str | None) -> Br
     )
 
 
-def _imported(
-    home: Path, former: FormerCollection, source: Path, report: Reporter, readers: Readers
-) -> Brought | Skipped:
-    one = _placed(home, former, source)
+def _imported(home: Path, former: FormerCollection, asked: _Importing) -> Brought | Skipped:
+    if not Path(former.folder).is_dir():
+        return Skipped(
+            Problem.FOLDER_MISSING, FOLDER_GONE.format(folder=former.folder), FOLDER_GONE_REMEDY, former.name
+        )
+    one = _placed(home, former, asked.source)
     if not former.active:
         deactivate(home, DeactivateCollections((one.name,)))
-    (indexed,) = index(home, IndexCollections((one.name,)), report, readers=readers).collections
+    (indexed,) = index(home, IndexCollections((one.name,)), asked.report, readers=asked.readers).collections
     if isinstance(indexed.outcome, Skipped):
-        gone = indexed.outcome.code is Problem.FOLDER_MISSING
-        return dataclasses.replace(indexed.outcome, remedy=FOLDER_GONE_REMEDY) if gone else indexed.outcome
-    model, _ = _carry_into(one, former, report)
+        return indexed.outcome
+    model, _ = _carry_into(one, former, asked)
     return _brought(one, former, model)
 
 
-def _one(home: Path, former: FormerCollection, source: Path, report: Reporter, readers: Readers) -> CollectionImported:
+def _one(home: Path, former: FormerCollection, asked: _Importing) -> CollectionImported:
     try:
-        return CollectionImported(former.name, _imported(home, former, source, report, readers))
+        return CollectionImported(former.name, _imported(home, former, asked))
     except SiftError as error:
-        report(Noted(error.message, error.remedy, error.code))
+        asked.report(Noted(error.message, error.remedy, error.code))
         return CollectionImported(former.name, Skipped(error.code, error.message, error.remedy, former.name))
 
 
@@ -211,9 +226,12 @@ def _chosen(found: tuple[FormerCollection, ...], names: tuple[str, ...]) -> tupl
     return tuple(held[name] for name in names) if names else found
 
 
-def imported(home: Path, request: ImportHome, report: Reporter, readers: Readers = READERS) -> HomeImported:
+def imported(
+    home: Path, request: ImportHome, report: Reporter, readers: Readers = READERS, embedding: str = EMBED_MODEL
+) -> HomeImported:
     source = home if request.home is None else Path(request.home)
     if not (source / FORMER_CATALOG).is_file():
         raise NotFoundError(NO_INDEX.format(home=source, catalog=FORMER_CATALOG), NO_INDEX_REMEDY, "home")
     chosen = _chosen(former_collections(source), request.collections)
-    return HomeImported(str(source), tuple(_one(home, each, source, report, readers) for each in chosen))
+    asked = _Importing(source, report, readers, embedding)
+    return HomeImported(str(source), tuple(_one(home, each, asked) for each in chosen))

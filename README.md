@@ -103,7 +103,7 @@ fields exist.
 |---|---|
 | `sift add FOLDER [--name NAME]` | Add a folder as a collection (`--store PATH` puts its store elsewhere, `--follow-links` reads files linked from outside it, `--title-from name` titles notes by file name) |
 | `sift index [NAME ...] [--file PATH]` | Read new and changed files, of every active collection or those named; `--file`, repeated: only these |
-| `sift embed [NAME ...] [--reset]` | Embed every passage without a vector; `--reset`: all of them again |
+| `sift embed [NAME ...]`, `sift embed --reset` | Embed every passage without a vector; `--reset`: every passage of every collection again |
 | `sift search`, `vsearch`, `query` `TEXT` | Keyword, semantic and hybrid search |
 | `sift similar ID` | Documents near one in meaning |
 | `sift get ID [ID ...] [--lines 14-23] [--fields a,b]` | Documents, or some of their lines |
@@ -190,11 +190,12 @@ says to upgrade, so upgrade every sift sharing a home. The
 **From sift 1.x**, whose stores sift 2 does not open: before upgrading, open a store older than sift 1.15 once with
 sift 1.15. Then stop sift 1.x, run `sift import` once in its home (or `sift import --home FOLDER -c NAME` for another
 home or one collection), and `sift embed`. The import adds each collection with its choices, reads its folder anew and
-keeps the vector of every passage whose text and title are unchanged, unless the model names no whole commit; the
-embedding embeds the rest. Each new store goes beside the old one as `NAME-v2.sqlite`, and nothing of sift 1.x is
-written: once the collections are as you want them, delete its stores, `sift.db`, `numba/`, `update.lock` and update
-logs. Workers need sift 2 as well and agents a new session; scripts need the ids of JSON Lines records and
-attachments, now `FILE#KEY`, and the `--json` keys the changelog lists.
+keeps the vector of every passage whose text and title are unchanged, if its model is the one sift embeds with, named
+at a whole commit; the embedding embeds the rest. Each new store goes beside the old one as `NAME-v2.sqlite`, and the
+files of sift 1.x keep what they hold (SQLite may leave a `-wal` and a `-shm` file beside one): once the collections
+are as you want them, delete its stores, `sift.db`, `numba/`, `update.lock` and update logs. Workers need sift 2 as
+well and agents a new session; scripts need the ids of JSON Lines records and attachments, now `FILE#KEY`, and the
+`--json` keys the changelog lists.
 
 ## Documentation
 

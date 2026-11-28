@@ -135,9 +135,9 @@ def test_a_next_step_names_the_collection_or_is_left_out_where_it_needs_one_and_
         return notice_lines((Notice(code, "said", None, collection),), PLAIN)[1:]
 
     assert steps(Problem.INACTIVE_COLLECTION, "notes") == (" next  sift activate notes",)
-    assert steps(Problem.OTHER_MODEL, "notes") == (" next  sift embed --reset notes",)
+    assert steps(Problem.OTHER_MODEL, "notes") == steps(Problem.OTHER_MODEL, None) == (" next  sift embed --reset",)
     assert steps(Problem.KEYWORDS_REMADE, None) == (" next  sift index",)
-    for code in (Problem.INACTIVE_COLLECTION, Problem.STORE_MISSING, Problem.STORE_DAMAGED, Problem.OTHER_MODEL):
+    for code in (Problem.INACTIVE_COLLECTION, Problem.STORE_MISSING, Problem.STORE_DAMAGED):
         assert steps(code, None) == ()
     refused = failure(StoreUnavailableError("no vectors yet", "embed it", code=Problem.NOT_EMBEDDED), PLAIN)
     assert refused.messages == ("error  no vectors yet", "  fix  embed it", " next  sift embed")

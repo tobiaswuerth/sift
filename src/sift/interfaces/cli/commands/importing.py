@@ -17,7 +17,8 @@ KEPT = "sift 1.x's files are as they were: remove its stores and sift.db once th
 
 
 def _imported(acting: Acting, request: ImportHome) -> HomeImported:
-    return importing.imported(acting.settings.home, request, acting.report, readers_of(acting))
+    settings = acting.settings
+    return importing.imported(settings.home, request, acting.report, readers_of(acting), settings.embed_model)
 
 
 def _pair(before: int, now: int) -> str:

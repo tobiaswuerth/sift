@@ -7,6 +7,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import NamedTuple, cast
 
+from sift.api.collections import TitleFrom
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.domain.errors import DamagedError
 from sift.storage.database import primary_code, read_only
@@ -22,6 +23,7 @@ STORED_TEXT_END = "\x00"
 OLDER = "its index is of a sift older than 1.8, which held every collection in one file"
 OLDER_REMEDY = "open it once with sift 1.15, which splits it into a store per collection, then import it"
 UNREAD_REMEDY = "check that this user may read the sift 1.x home and its stores"
+GONE_REMEDY = "bring it back where sift 1.x kept it, or import the other collections by name"
 OTHER_LAYOUT = "{path} is not as sift 1.15 writes its stores: {error}"
 OTHER_LAYOUT_REMEDY = "open that home once with sift 1.15, which brings its stores up to date, then import it"
 CATALOG_OF_1 = Unusable(
@@ -107,7 +109,11 @@ def _choices(fields: str | None) -> Mapping[str, object]:
         read = cast("object", json.loads(fields)) if fields else None
     except ValueError as error:
         raise DamagedError(f"the choices of a collection are no JSON: {error}") from None
-    return MappingProxyType(cast("dict[str, object]", read) if isinstance(read, dict) else {})
+    held = cast("dict[str, object]", read) if isinstance(read, dict) else {}
+    titled = held.get("title_from")
+    if titled is not None and titled not in set(TitleFrom):
+        raise DamagedError(f"the choices of a collection take its titles from {titled!r}, which no sift wrote")
+    return MappingProxyType(held)
 
 
 def former_collections(home: Path) -> tuple[FormerCollection, ...]:
@@ -180,8 +186,12 @@ class FormerStore:
 
 @contextmanager
 def former_store(path: Path) -> Generator[FormerStore]:
+    if not path.is_file():
+        raise StoreUnavailableError(f"{path} is missing", GONE_REMEDY, code=Problem.STORE_MISSING)
     with unavailable_if_unusable(path, STORE_OF_1), closing(_opened(path)) as connection:
-        if not _names(connection, TABLES) >= STORE_TABLES:
-            raise StoreUnavailableError(f"{path}: {OLDER}", OLDER_REMEDY)
+        lacked = sorted(STORE_TABLES - _names(connection, TABLES))
+        if lacked:
+            said = OTHER_LAYOUT.format(path=path, error=f"it lacks the tables {', '.join(lacked)}")
+            raise StoreUnavailableError(said, OTHER_LAYOUT_REMEDY)
         connection.execute(AS_IT_IS_NOW)
         yield FormerStore(connection, path)

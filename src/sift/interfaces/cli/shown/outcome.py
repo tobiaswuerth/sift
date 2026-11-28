@@ -2,6 +2,7 @@ import json
 import re
 import traceback
 from collections.abc import Mapping
+from enum import Enum
 from types import MappingProxyType
 from typing import NamedTuple
 
@@ -31,19 +32,25 @@ FIELD_HEAD = re.compile(r"[.\[]")
 NOTICE_TONES: Mapping[str, Tone] = MappingProxyType({"error": Tone.ERROR, "note": Tone.WARNING})
 
 
+class Naming(Enum):
+    IF_KNOWN = "if known"
+    NEEDED = "needed"
+    NEVER = "never"
+
+
 class NextStep(NamedTuple):
     words: tuple[str, ...]
-    of_one_alone: bool
+    naming: Naming
 
 
 NEXT_STEPS: Mapping[Problem, NextStep] = MappingProxyType(
     {
-        Problem.NOT_EMBEDDED: NextStep(("sift", "embed"), of_one_alone=False),
-        Problem.OTHER_MODEL: NextStep(("sift", "embed", "--reset"), of_one_alone=True),
-        Problem.KEYWORDS_REMADE: NextStep(("sift", "index"), of_one_alone=False),
-        Problem.INACTIVE_COLLECTION: NextStep(("sift", "activate"), of_one_alone=True),
-        Problem.STORE_MISSING: NextStep(("sift", "rm"), of_one_alone=True),
-        Problem.STORE_DAMAGED: NextStep(("sift", "rm"), of_one_alone=True),
+        Problem.NOT_EMBEDDED: NextStep(("sift", "embed"), Naming.IF_KNOWN),
+        Problem.OTHER_MODEL: NextStep(("sift", "embed", "--reset"), Naming.NEVER),
+        Problem.KEYWORDS_REMADE: NextStep(("sift", "index"), Naming.IF_KNOWN),
+        Problem.INACTIVE_COLLECTION: NextStep(("sift", "activate"), Naming.NEEDED),
+        Problem.STORE_MISSING: NextStep(("sift", "rm"), Naming.NEEDED),
+        Problem.STORE_DAMAGED: NextStep(("sift", "rm"), Naming.NEEDED),
     }
 )
 STOPPED_WRITING = "stopped: what was written so far is kept"
@@ -59,9 +66,9 @@ class Shown(NamedTuple):
 
 def command_next(code: Problem, style: Style, name: str | None = None) -> tuple[str, ...]:
     step = NEXT_STEPS.get(code)
-    if step is None or (name is None and step.of_one_alone):
+    if step is None or (name is None and step.naming is Naming.NEEDED):
         return ()
-    said = " ".join(step.words if name is None else (*step.words, name))
+    said = " ".join(step.words if name is None or step.naming is Naming.NEVER else (*step.words, name))
     return (labelled("next", said, Tone.SECONDARY, style),)
 
 
