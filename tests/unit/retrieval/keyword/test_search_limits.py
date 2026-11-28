@@ -319,3 +319,12 @@ def test_a_leaf_out_of_time_midway_keeps_what_it_read_where_that_is_whole(
         answers = iter(asked)
         made = prepared(planned(stores[0], leaf), expired=lambda: next(answers))
         assert (made.cut, places(made, leaf)) == (True, read)
+
+
+def test_a_word_counted_in_more_passages_than_the_store_holds_is_damage() -> None:
+    notes: Round = {f"n{n}.md": ("", "N", "alpha") for n in range(4)}
+    with collections([[notes]]) as (stores, _):
+        (store,) = stores
+        store.chunks = 1
+        with pytest.raises(DamagedError, match="counts a word in more passages than it holds"):
+            prepared(planned(store, Term("alpha")))

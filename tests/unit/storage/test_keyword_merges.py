@@ -14,6 +14,7 @@ from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows, run, writing
 from sift.storage.keyword_lists import parts
+from sift.storage.keyword_merges import Totals, average_of
 from sift.storage.keywords import TAKEN_OVER_REMEDY, remade, remake_started, settle
 from tests.examples import few
 from tests.keyword_indexes import (
@@ -303,3 +304,9 @@ def test_a_write_merges_no_more_than_its_budget_however_many_would_fit_alone() -
             sized = rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments ORDER BY first")
         assert [each.chunks for each in sized] == [2, 1, 1]
         checked(connection)
+
+
+def test_an_average_of_no_passage_counted_is_damage() -> None:
+    assert average_of(Totals(4, 10)) == 2.5
+    with pytest.raises(DamagedError, match="counts no passage where it holds some"):
+        average_of(Totals(0, 10))

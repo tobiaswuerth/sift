@@ -13,7 +13,7 @@ from sift.storage.database import (
     run,
     run_each,
 )
-from sift.storage.keyword_merges import settled
+from sift.storage.keyword_merges import average_of, settled
 from sift.storage.keyword_meta import Side
 from sift.storage.keyword_reads import Span, read_ahead
 from sift.storage.keywords import (
@@ -60,7 +60,7 @@ def _indexed(transaction: WritingDocuments, shape: Shape) -> int:
     if not spans:
         return 0
     held = totals(transaction)
-    written = segment_written(transaction, built_of(transaction, spans, read_ahead), held.tokens / held.chunks, shape)
+    written = segment_written(transaction, built_of(transaction, spans, read_ahead), average_of(held), shape)
     run(transaction, "UPDATE keyword_beside SET through = ?", (written.last,))
     return written.chunks
 

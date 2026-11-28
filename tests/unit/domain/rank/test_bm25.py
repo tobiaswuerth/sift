@@ -3,10 +3,12 @@ import sqlite3
 from contextlib import closing
 
 import numpy as np
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.arrays import floats
+from sift.domain.errors import DamagedError
 from sift.domain.rank.bm25 import idf, slack, term_scores
 from sift.domain.text.tokens import tokens
 from tests.examples import more
@@ -54,3 +56,13 @@ def test_a_score_bounded_at_one_average_length_is_bounded_at_another_times_the_s
     before = floats(term_scores(np.array([tf]), np.array([length]), built))[0]
     after = floats(term_scores(np.array([tf]), np.array([length]), now))[0]
     assert after <= before * slack(now, built) * (1 + 1e-12)
+
+
+def test_counts_no_index_can_hold_are_damage() -> None:
+    assert idf(3, 3) > 0
+    with pytest.raises(DamagedError, match="counts a word in more passages than it holds"):
+        idf(1, 2)
+    with pytest.raises(DamagedError, match="holds words in passages of no length"):
+        term_scores(np.array([1], np.int64), np.array([1], np.int64), 0.0)
+    with pytest.raises(DamagedError, match="holds words in passages of no length"):
+        slack(1.0, 0.0)

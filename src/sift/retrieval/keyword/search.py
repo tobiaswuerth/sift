@@ -6,9 +6,10 @@ import numpy as np
 
 from sift.api.ids import ChunkId, DocumentId
 from sift.domain.arrays import Ascending, Ids, Scores, among, distinct, ints
+from sift.domain.errors import DamagedError
 from sift.domain.query.expressions import Expression, Leaf, Phrase, Prefix, Term, leaves
 from sift.domain.rank.best import Best, may_reach, offered, ranked, unreached_alone
-from sift.domain.rank.bm25 import idf
+from sift.domain.rank.bm25 import OVERCOUNTED, idf
 from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
 from sift.retrieval.keyword.leaves import (
@@ -240,6 +241,8 @@ def prepared(plan: Planned, *, allowed: AllowedDocuments | None = None, expired:
             read = materialized(store, leaf, lists, expired)
             found[leaf], df[leaf] = read.postings, len(read.postings[0])
             cut = cut or read.cut
+    if any(count > store.chunks for count in df.values()):
+        raise DamagedError(OVERCOUNTED)
     return Prepared(store, found, df, allowed, cut)
 
 

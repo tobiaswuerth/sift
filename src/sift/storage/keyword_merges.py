@@ -60,6 +60,12 @@ class Totals(NamedTuple):
     tokens: int
 
 
+def average_of(held: Totals) -> float:
+    if held.chunks < 1:
+        raise DamagedError("the keyword index counts no passage where it holds some")
+    return held.tokens / held.chunks
+
+
 def _ids(transaction: WritingDocuments, sql: str, low: int, high: int) -> Ids:
     return np.fromiter((found.id for found in streamed(transaction, IdRow, sql, (low, high))), np.int64)
 
@@ -99,7 +105,7 @@ def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shap
         raise DamagedError("segments of the keyword index hold no chunk the store holds")
     lengths = _lengths(transaction, merged, live, shape.lengths_shift)
     (held,) = rows(transaction, Totals, HELD)
-    average = held.tokens / held.chunks
+    average = average_of(held)
     made = segment_added(transaction, Head(first(live), last(live), len(live), average))
     dead = _ids(
         transaction, "SELECT place AS id FROM keyword_dead WHERE place BETWEEN ? AND ? ORDER BY place", low, high
