@@ -5,9 +5,10 @@ from importlib.metadata import version
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol
 
+from sift.api.errors import InvalidRequestError
 from sift.api.events import Event, Listening, Reporter
 from sift.api.package import PACKAGE
-from sift.api.serving import OpenUi, Served, ServeHome, ServeWorker, UiOpened
+from sift.api.serving import PORT, OpenUi, Served, ServeHome, ServeWorker, UiOpened
 from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.cli.arguments import request_of
 from sift.interfaces.cli.commands.making import acting, as_json, command
@@ -34,6 +35,9 @@ class ModelsLent(Protocol):
 
 
 def _serve(acting: Acting, request: ServeHome) -> Served:
+    if request.stdio and request.port != PORT:
+        said = "sift serve --stdio talks to the home process wherever it listens, so it takes no port"
+        raise InvalidRequestError(said, "leave --port out, or start sift serve --port first", "port")
     if request.stdio:
         starting = Starting(idle=request.idle_exit or IDLE_SECONDS)
         proxied(acting.settings, acting.report, Pipes(sys.stdin.buffer, sys.stdout.buffer), starting)

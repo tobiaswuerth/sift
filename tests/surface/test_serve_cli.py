@@ -52,3 +52,8 @@ def test_ctrl_c_stops_the_home_process_and_takes_its_endpoint_away(tmp_path: Pat
     with process.served(home) as running:
         assert own_endpoint(settings).exists()
     assert (running.returncode, own_endpoint(settings).exists(), found(settings)) == (0, False, None)
+
+
+def test_serve_over_stdio_takes_no_port_and_says_so(settings: Settings) -> None:
+    code, out, err = ran(settings, "serve", "--stdio", "--port", "5")
+    assert (code, out, err.startswith("error  --port: sift serve --stdio talks to the home process")) == (2, "", True)
