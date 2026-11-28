@@ -11,7 +11,7 @@ from sift.api.wire import Json
 from sift.interfaces.acts.acting import answered
 from sift.interfaces.web.html import Html, joined, tag
 from sift.interfaces.web.marking import Sought, snippet, sought
-from sift.interfaces.web.view import MODES, MOST, PAGE, PageView, filtered, filters_of, folder_glob, href
+from sift.interfaces.web.view import MODES, MOST_SHOWN, PAGE, PageView, filtered, filters_of, folder_glob, href
 
 FACET_VALUES = 8
 SHORT = 60
@@ -114,9 +114,9 @@ def _hit(view: PageView, hit: Hit, terms: Sought) -> Html:
 
 
 def _more(view: PageView, *, more: bool) -> Html:
-    if not more or view.k >= MOST:
+    if not more or view.k >= MOST_SHOWN:
         return Html("")
-    return tag("a", {"class": "more", "href": href(view, k=min(view.k + PAGE, MOST))}, "More")
+    return tag("a", {"class": "more", "href": href(view, k=min(view.k + PAGE, MOST_SHOWN))}, "More")
 
 
 def _hits(view: PageView, result: SearchResult, heading: str) -> Explored:

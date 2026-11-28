@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from types import MappingProxyType
 from typing import cast
 
-from sift.api.described import SECONDS
+from sift.api.described import BUDGET_SECONDS
 from sift.api.errors import InvalidRequestError
 from sift.api.links import FindMentions, FindSimilar, Links, ShowLinks
 from sift.api.search import MOST_HITS, Options, SearchHybrid, SearchKeywords, SearchVectors
@@ -98,9 +98,9 @@ def _shared(rest: dict[str, object], queries: tuple[str, ...], request: type[Opt
         raise InvalidRequestError(said, f"ask for {MOST_HITS // n:,} hits each at most, or give fewer queries", "k")
     if asked.budget is None:
         return rest
-    if asked.budget / n < SECONDS.low:
-        said = f"{asked.budget:g} s shared by {n} queries leaves each less than {SECONDS.low:g} s"
-        raise InvalidRequestError(said, f"give a budget of {SECONDS.low * n:g} s at least", "budget")
+    if asked.budget / n < BUDGET_SECONDS.low:
+        said = f"{asked.budget:g} s shared by {n} queries leaves each less than {BUDGET_SECONDS.low:g} s"
+        raise InvalidRequestError(said, f"give a budget of {BUDGET_SECONDS.low * n:g} s at least", "budget")
     return {**rest, "budget": asked.budget / n}
 
 

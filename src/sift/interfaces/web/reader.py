@@ -12,8 +12,8 @@ from sift.interfaces.web.html import Html, joined, tag
 from sift.interfaces.web.marking import marked, sought
 from sift.interfaces.web.view import PAGE, PREFIX, PageView, filtered, href
 
-READER_LINES = 2_000
-READER_CHARACTERS = 1 << 20
+MOST_READER_LINES = 2_000
+MOST_READER_CHARACTERS = 1 << 20
 CUT = "{left:,} more characters in this line: Open the file shows them all"
 SHORT = 60
 HEADING = re.compile(r"(#{1,6}) ")
@@ -51,19 +51,19 @@ def _line(number: int, text: str, span: tuple[int, int] | None, view: PageView) 
     shown = text[heading.end() :] if heading else text
     hit = span is not None and span[0] <= number <= span[1]
     classes = " ".join(each for each in (kind, "hit" if hit else None) if each) or None
-    left = len(shown) - READER_CHARACTERS
+    left = len(shown) - MOST_READER_CHARACTERS
     return tag(
         "div",
         {"class": classes, "id": f"l{number}"},
         tag("span", {"class": "n"}, number),
-        marked(shown[:READER_CHARACTERS], sought(view.q)),
+        marked(shown[:MOST_READER_CHARACTERS], sought(view.q)),
         tag("span", {"class": "cut"}, CUT.format(left=left)) if left > 0 else "",
     )
 
 
 def _fitting(lines: Sequence[str]) -> int:
     held = accumulate(len(line) for line in lines)
-    return max(sum(1 for each in held if each <= READER_CHARACTERS), min(1, len(lines)))
+    return max(sum(1 for each in held if each <= MOST_READER_CHARACTERS), min(1, len(lines)))
 
 
 def _lines(view: PageView, text: str, span: tuple[int, int] | None) -> tuple[Html, int, int, int]:
@@ -71,9 +71,9 @@ def _lines(view: PageView, text: str, span: tuple[int, int] | None) -> tuple[Htm
     if lines[-1] == "":
         lines.pop()
     total = len(lines)
-    first = view.at or (max(1, span[0] - READER_LINES // 10) if span else 1)
+    first = view.at or (max(1, span[0] - MOST_READER_LINES // 10) if span else 1)
     first = min(first, max(1, total))
-    last = first - 1 + _fitting(lines[first - 1 : first - 1 + READER_LINES])
+    last = first - 1 + _fitting(lines[first - 1 : first - 1 + MOST_READER_LINES])
     rows = [_line(number, lines[number - 1], span, view) for number in range(first, last + 1)]
     return tag("div", {"class": "text"}, rows), first, last, total
 
@@ -101,7 +101,7 @@ def _actions(view: PageView, reads: PageReads, document: DocumentText) -> Html:
 def _parts(view: PageView, first: int, last: int, total: int) -> Html:
     if first == 1 and last >= total:
         return Html("")
-    earlier = tag("a", {"href": href(view, at=max(1, first - READER_LINES))}, "Earlier") if first > 1 else ""
+    earlier = tag("a", {"href": href(view, at=max(1, first - MOST_READER_LINES))}, "Earlier") if first > 1 else ""
     later = tag("a", {"href": href(view, at=last + 1)}, "Later") if last < total else ""
     return tag("p", {"class": "part"}, f"lines {first:,} to {last:,} of {total:,} ", earlier, " ", later)
 

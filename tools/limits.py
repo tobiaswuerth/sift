@@ -7,7 +7,7 @@ from pathlib import Path
 from tools.findings import ROOT, Finding, report, tracked
 
 PAGE = ROOT / "docs" / "limits.md"
-BOUND = re.compile(r"(MOST|FEWEST|LEAST)_\w+|\w+_(SECONDS|BYTES)")
+BOUND = re.compile(r"(MOST|FEWEST|LEAST)_\w+|\w+_(SECONDS|BYTES|LENGTH)")
 CONSTANT = re.compile(r"^(?:pub(?:\(\w+\))? )?const (\w+): [^=]+ = (.+);$", re.MULTILINE)
 CRATE = "native/src"
 CRATE_TESTS = "tests"

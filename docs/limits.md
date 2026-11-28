@@ -5,8 +5,14 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 
 | Module | Name | Value |
 |---|---|---|
+| `sift.api.browsing` | `FOLDER_LENGTH` | `Length(0, 32_767)` |
 | `sift.api.collections` | `MOST_NAMED` | `1_000` |
 | `sift.api.described` | `MOST_LISTED` | `1_000` |
+| `sift.api.described` | `PATH_LENGTH` | `Length(1, 32_767)` |
+| `sift.api.described` | `NAME_LENGTH` | `Length(1, 200)` |
+| `sift.api.described` | `FIELD_LENGTH` | `Length(1, 1_000)` |
+| `sift.api.described` | `TEXT_LENGTH` | `Length(1, 10_000)` |
+| `sift.api.described` | `BUDGET_SECONDS` | `Within(0.001, 86_400.0)` |
 | `sift.api.documents` | `MOST_LINE` | `2**31 - 1` |
 | `sift.api.documents` | `MOST_DOCUMENTS` | `1_000` |
 | `sift.api.filters` | `MOST_INTEGER` | `2**63` |
@@ -19,6 +25,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.api.search` | `MOST_LINKS` | `100` |
 | `sift.api.serving` | `MOST_PORT` | `65535` |
 | `sift.api.serving` | `MOST_IDLE_SECONDS` | `604_800` |
+| `sift.api.serving` | `HOST_LENGTH` | `Length(1, 253)` |
 | `sift.app.bench` | `MOST_FILE_BYTES` | `64 << 20` |
 | `sift.app.bench` | `MOST_NESTING` | `8` |
 | `sift.app.documents` | `MOST_LISTED` | `5` |
@@ -138,6 +145,9 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.interfaces.server.serving` | `Serve.keep_alive_seconds` | `KEEP_ALIVE_SECONDS` |
 | `sift.interfaces.server.serving` | `Serve.body_seconds` | `BODY_SECONDS` |
 | `sift.interfaces.server.serving` | `Serve.most_connections` | `MOST_CONNECTIONS` |
+| `sift.interfaces.web.reader` | `MOST_READER_LINES` | `2_000` |
+| `sift.interfaces.web.reader` | `MOST_READER_CHARACTERS` | `1 << 20` |
+| `sift.interfaces.web.view` | `MOST_SHOWN` | `500` |
 | `sift.interfaces.web.view` | `MOST_FILTERS` | `32` |
 | `sift.interfaces.web.view` | `MOST_PATH_CHARACTERS` | `4_096` |
 | `sift.interfaces.web.view` | `MOST_FOLDERS_DEEP` | `256` |

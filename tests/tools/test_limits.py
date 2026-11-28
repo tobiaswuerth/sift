@@ -9,6 +9,7 @@ SOURCE = """\
 MOST_ITEMS = 1_000
 WAIT_SECONDS: float = 2.5
 KEPT_BYTES = 64 << 20
+TEXT_LENGTH = Length(1, 10_000)
 FEWEST_WORDS, LEAST_SHARE = 2, 0.1
 OTHER = 3
 MOST_DECLARED: int
@@ -39,6 +40,7 @@ def test_bounds_are_the_module_constants_and_class_fields_named_as_bounds_with_t
         Limit("sift.a", "MOST_ITEMS", "1_000"),
         Limit("sift.a", "WAIT_SECONDS", "2.5"),
         Limit("sift.a", "KEPT_BYTES", "64 << 20"),
+        Limit("sift.a", "TEXT_LENGTH", "Length(1, 10_000)"),
         Limit("sift.a", "FEWEST_WORDS", "2"),
         Limit("sift.a", "LEAST_SHARE", "0.1"),
         Limit("sift.a", "C.MOST_FIELD", "2"),

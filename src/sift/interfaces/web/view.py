@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 
 PREFIX = "/ui"
 PAGE = 30
-MOST = 500
+MOST_SHOWN = 500
 MOST_FILTERS = 32
 MOST_PATH_CHARACTERS = 4_096
 MOST_FOLDERS_DEEP = 256
@@ -55,7 +55,7 @@ def view_of(pairs: Sequence[tuple[str, str]]) -> PageView:
         path=f"{path}/" if path else "",
         f=tuple(value for key, value in pairs if key == "f" and "=" in value)[:MOST_FILTERS],
         sort=given.get("sort", ""),
-        k=min(_count(given.get("k", "")), MOST) or PAGE,
+        k=min(_count(given.get("k", "")), MOST_SHOWN) or PAGE,
         similar=given.get("similar", ""),
         to=given.get("to", ""),
         by=given.get("by", ""),

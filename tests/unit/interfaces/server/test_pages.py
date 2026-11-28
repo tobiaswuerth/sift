@@ -17,7 +17,7 @@ from sift.app.embedding import embed
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import HomeServer
-from sift.interfaces.web.reader import READER_CHARACTERS
+from sift.interfaces.web.reader import MOST_READER_CHARACTERS
 from sift.settings import Settings
 from sift.storage.store_files import CATALOG
 from tests.damage import damage_pages, damage_table
@@ -244,7 +244,7 @@ def test_a_long_document_shows_in_parts(home: Settings, notes: Path) -> None:
 def test_a_document_of_very_long_lines_shows_in_parts_no_longer_than_the_reader_holds(
     home: Settings, notes: Path
 ) -> None:
-    wide = "wide " * (READER_CHARACTERS // 10)
+    wide = "wide " * (MOST_READER_CHARACTERS // 10)
     write(notes / "wide.md", "# Wide\n\n" + "".join(f"{wide}\n" for _ in range(5)))
     indexed(home.home)
     with running(home) as server:
@@ -261,14 +261,14 @@ def test_a_document_of_very_long_lines_shows_in_parts_no_longer_than_the_reader_
 def test_a_line_longer_than_the_reader_holds_shows_its_start_and_how_much_the_file_has_more(
     home: Settings, notes: Path
 ) -> None:
-    write(notes / "one.txt", ("word " * READER_CHARACTERS)[: READER_CHARACTERS + 500] + "\nthe second line\n")
+    write(notes / "one.txt", ("word " * MOST_READER_CHARACTERS)[: MOST_READER_CHARACTERS + 500] + "\nthe second line\n")
     indexed(home.home)
     with running(home) as server:
         first = page(server, doc="notes/one.txt")
         later = page(server, doc="notes/one.txt", at="2")
     assert "lines 1 to 1 of 2" in first
     assert '<span class="cut">500 more characters in this line: Open the file shows them all</span></div>' in first
-    assert len(first) < 2 * READER_CHARACTERS
+    assert len(first) < 2 * MOST_READER_CHARACTERS
     assert ('<span class="n">2</span>the second line</div>' in later, 'class="cut"' in later) == (True, False)
 
 

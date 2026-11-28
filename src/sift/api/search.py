@@ -2,11 +2,11 @@ from dataclasses import dataclass, field
 from typing import Annotated, Literal
 
 from sift.api.described import (
+    BUDGET_SECONDS,
     FIELD_LENGTH,
     LISTED,
     NAME_LENGTH,
     PATH_LENGTH,
-    SECONDS,
     TEXT_LENGTH,
     Bounds,
     Composed,
@@ -65,7 +65,7 @@ class Options(Request):
     compact: Annotated[bool, Help("leave out the text of each passage")] = False
     adaptive: Annotated[bool, Help(ADAPTIVE)] = False
     offset: Annotated[int, Help(OFFSET), Bounds(0, MOST_HITS - 1)] = 0
-    budget: Annotated[float | None, Help(BUDGET), SECONDS] = None
+    budget: Annotated[float | None, Help(BUDGET), BUDGET_SECONDS] = None
 
     @property
     def wanted(self) -> int:

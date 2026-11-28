@@ -98,9 +98,9 @@ starts without the model libraries.
   and an older sift goes by it. A change of the keyword index's bytes or of the tokenizer's table raises `FORMAT`:
   an older sift then refuses that index and says to upgrade, where it would otherwise make it anew as its own.
 - Published text names no machine's model, and prose is wrapped as the code is (`python -m tools text`).
-- A bound is a module constant named `MOST_*`, `FEWEST_*`, `LEAST_*`, `*_SECONDS` or `*_BYTES`, or a field of a
-  class named so in lower case, beside what it bounds; [limits.md](limits.md) lists them all, written anew by
-  `python -m tools limits --write`, and a test holds it equal to the code.
+- A bound is a module constant named `MOST_*`, `FEWEST_*`, `LEAST_*`, `*_SECONDS`, `*_BYTES` or `*_LENGTH`, or a
+  field of a class named so in lower case, beside what it bounds; [limits.md](limits.md) lists them all, written anew
+  by `python -m tools limits --write`, and a test holds it equal to the code.
 - No check is silenced. A suppression needs the owner's yes, scoped to one rule in one place.
 
 ## How changes are made
