@@ -1,11 +1,11 @@
 import dataclasses
 import difflib
 from collections.abc import Generator, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from types import MappingProxyType
 from typing import cast
 
-from sift.api.described import BUDGET_SECONDS
 from sift.api.errors import InvalidRequestError
 from sift.api.links import FindMentions, FindSimilar, Links, ShowLinks
 from sift.api.search import MOST_HITS, Options, SearchHybrid, SearchKeywords, SearchVectors
@@ -31,8 +31,9 @@ QUERY = (
     'what to find: a question or a description (hybrid, semantic), or keywords (keyword): words, "phrases", '
     "prefix*, AND, OR, NOT (in capitals) and (parentheses). Keywords side by side must all be in a passage; if no "
     "passage holds them all, any will do, and the answer says `loosened`. `a NOT b c` leaves out what holds both b "
-    f"and c: write `a NOT (b OR c)` for either. Several phrasings at once as a list of up to {MOST_QUERIES}, each "
-    f"searched alike and answered in turn, sharing the budget; k times their number is at most {MOST_HITS:,}"
+    f"and c: write `a NOT (b OR c)` for either. Several phrasings at once as a list of up to {MOST_QUERIES}, "
+    f"searched alike and at the same time, each within the budget, answered in turn; k times their number is at "
+    f"most {MOST_HITS:,}"
 )
 MODE = (
     "hybrid (default): keywords and meaning, reranked, for questions and topics; keyword: exact strings, such as "
@@ -91,17 +92,11 @@ def _queries(given: object) -> tuple[str, ...]:
     return tuple(cast("list[str]", listed))
 
 
-def _shared(rest: dict[str, object], queries: tuple[str, ...], request: type[Options]) -> dict[str, object]:
+def _refuse_too_many_hits(rest: dict[str, object], queries: tuple[str, ...], request: type[Options]) -> None:
     asked, n = decoded(request, {**rest, "query": queries[0]}), len(queries)
     if asked.k * n > MOST_HITS:
         said = f"{n} queries of {asked.k:,} hits each ask for more than {MOST_HITS:,} hits in all"
         raise InvalidRequestError(said, f"ask for {MOST_HITS // n:,} hits each at most, or give fewer queries", "k")
-    if asked.budget is None:
-        return rest
-    if asked.budget / n < BUDGET_SECONDS.low:
-        said = f"{asked.budget:g} s shared by {n} queries leaves each less than {BUDGET_SECONDS.low:g} s"
-        raise InvalidRequestError(said, f"give a budget of {BUDGET_SECONDS.low * n:g} s at least", "budget")
-    return {**rest, "budget": asked.budget / n}
 
 
 @contextmanager
@@ -129,13 +124,15 @@ def _search(running: ToolRunning, arguments: Mapping[str, object]) -> Json:
     for name, query in zip(names, queries, strict=True):
         with _named(name):
             decoded(request, {**rest, "query": query})
-    shared = _shared(rest, queries, request)
+    _refuse_too_many_hits(rest, queries, request)
     found, room = list[ToolAnswer](), MOST_TEXT
-    for name, query in zip(names, queries, strict=True):
-        with _named(name):
-            shown, held = hits_of(running.read(act, cast("Json", {**shared, "query": query})), room)
-        room -= held
-        found.append(shown)
+    with ThreadPoolExecutor(len(queries), thread_name_prefix="sift-query") as pool:
+        asked = [pool.submit(running.read, act, cast("Json", {**rest, "query": query})) for query in queries]
+        for name, answer in zip(names, asked, strict=True):
+            with _named(name):
+                shown, held = hits_of(answer.result(), room)
+            room -= held
+            found.append(shown)
     if alone:
         return cast("Json", found[0])
     return {"results": [{"query": query, **each} for query, each in zip(queries, found, strict=True)]}

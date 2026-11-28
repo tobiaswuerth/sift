@@ -15,6 +15,9 @@ versions follow [Semantic Versioning](https://semver.org/). Releases before 2.0 
 
 - Semantic and hybrid search scan the vectors' codes in the compiled extension, on all cores and without copying
   them: over tens of millions of passages, that part of a search takes about half as long.
+- Over MCP, the queries of one `search` call run at the same time instead of one after another, each within the
+  call's whole budget, and questions waiting to be embedded reach the model together: a call of several queries
+  takes about half as long.
 
 ## [2.0.0] - 2026-11-28
 

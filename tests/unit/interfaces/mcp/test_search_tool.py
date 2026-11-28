@@ -1,14 +1,20 @@
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 from sift.api.errors import InvalidRequestError
+from sift.api.jobs import ServedJob
+from sift.api.wire import Json
 from sift.interfaces.mcp.answers import MOST_TEXT
 from sift.interfaces.mcp.searches import MOST_QUERIES
-from tests.agent_tools import Direct, Object, called, ids
+from sift.interfaces.mcp.tools import Started
+from tests.agent_tools import Direct, Object, called, ids, tool
 from tests.files import write
 from tests.homes import indexed
+from tests.waits import crossed
 
 
 def test_a_search_is_hybrid_unless_another_mode_is_asked_for(direct: Direct) -> None:
@@ -119,18 +125,45 @@ def test_a_search_says_when_more_results_wait(direct: Direct) -> None:
     assert "more" not in called(direct, "search", {"query": "Note", "mode": "keyword", "k": 5})
 
 
-def test_several_queries_share_the_time_budget_one_call_has(direct: Direct) -> None:
+@dataclass(frozen=True, slots=True)
+class Together:
+    direct: Direct
+    met: threading.Barrier
+
+    def read(self, name: str, data: Json) -> object:
+        crossed(self.met)
+        return self.direct.read(name, data)
+
+    def job(self, name: str, data: Json) -> Started:
+        raise AssertionError((name, data))
+
+    def jobs(self) -> tuple[ServedJob, ...]:
+        return ()
+
+
+def test_the_queries_of_one_call_are_searched_at_the_same_time(direct: Direct) -> None:
+    queries = ["Kestrel", "osprey", "Note"]
+    together = Together(direct, threading.Barrier(len(queries)))
+    answer = cast("Object", tool("search").call(together, {"query": queries, "mode": "keyword"}))
+    results = cast("list[Object]", answer["results"])
+    assert [(each["query"], ids(each)[:1]) for each in results] == [
+        ("Kestrel", ["open/Plan.md"]),
+        ("osprey", ["open/Other.md"]),
+        ("Note", ids(called(direct, "search", {"query": "Note", "mode": "keyword"}))[:1]),
+    ]
+
+
+def test_each_query_of_a_call_has_the_whole_budget_the_call_has(direct: Direct) -> None:
     called(direct, "search", {"query": ["Kestrel", "osprey"], "mode": "keyword", "budget": 2.0})
-    assert [cast("Object", each)["budget"] for each in direct.sent] == [1.0, 1.0]
-    called(direct, "search", {"query": "Kestrel", "mode": "keyword", "budget": 2.0})
-    assert cast("Object", direct.sent[-1])["budget"] == 2.0
+    assert [cast("Object", each)["budget"] for each in direct.sent] == [2.0, 2.0]
+    called(direct, "search", {"query": ["a"] * MOST_QUERIES, "mode": "keyword", "budget": 0.01})
+    assert [cast("Object", each)["budget"] for each in direct.sent[2:]] == [0.01] * MOST_QUERIES
 
 
 @pytest.mark.parametrize(
     "arguments, said",
     [
         ({"query": ["a", "b"], "budget": -2}, "^-2 is outside"),
-        ({"query": ["a"] * 20, "budget": 0.01}, r"0\.01 s shared by 20 queries"),
         ({"query": ["a", "b"], "k": 5_001}, r"10,000 hits"),
     ],
 )
