@@ -1,6 +1,6 @@
 import hashlib
 from array import array
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -115,7 +115,7 @@ class _Importing:
     source: Path
     report: Reporter
     readers: Readers
-    embedding: str
+    embedding: Callable[[], str]
 
 
 def _target(former: FormerCollection) -> Path:
@@ -171,8 +171,9 @@ def _carry_into(one: Collection, former: FormerCollection, asked: _Importing) ->
         if COMMIT.fullmatch(model.rpartition("@")[2]) is None:
             report(Noted(UNPINNED_MODEL.format(model=model), UNPINNED_REMEDY))
             return model, 0
-        if model != pinned(asked.embedding):
-            report(Noted(OTHER_MODEL.format(model=model, wanted=pinned(asked.embedding)), OTHER_MODEL_REMEDY))
+        wanted = asked.embedding()
+        if model != wanted:
+            report(Noted(OTHER_MODEL.format(model=model, wanted=wanted), OTHER_MODEL_REMEDY))
             return model, 0
         with sole_writer(one.store, "an import"), connected(one.store, one.id) as connection:
             return model, _carried(connection, old, model, report)
@@ -228,8 +229,16 @@ def _chosen(found: tuple[FormerCollection, ...], names: tuple[str, ...]) -> tupl
     return tuple(held[name] for name in names) if names else found
 
 
+def _pinned_default() -> str:
+    return pinned(EMBED_MODEL)
+
+
 def imported(
-    home: Path, request: ImportHome, report: Reporter, readers: Readers = READERS, embedding: str = EMBED_MODEL
+    home: Path,
+    request: ImportHome,
+    report: Reporter,
+    readers: Readers = READERS,
+    embedding: Callable[[], str] = _pinned_default,
 ) -> HomeImported:
     source = home if request.home is None else Path(request.home)
     if not (source / FORMER_CATALOG).is_file():

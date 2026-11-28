@@ -147,3 +147,9 @@ def test_a_filter_too_long_is_refused_saying_how_long_it_may_be(field: str, valu
     with pytest.raises(InvalidRequestError, match=said):
         Filter(field, Operator.ANY, values)
     assert Filter("f" * 1_000, Operator.ANY, ("x" * 10_000,) * 2).values[0] == "x" * 10_000
+
+
+@pytest.mark.parametrize("sign, said", [("", "is too large"), ("-", "is too small")])
+def test_a_range_of_an_integer_too_long_to_read_is_refused_by_its_sign(sign: str, said: str) -> None:
+    with pytest.raises(InvalidRequestError, match=said):
+        Filter("n", Operator.AT_LEAST, (sign + "1" + "0" * 5_000,))

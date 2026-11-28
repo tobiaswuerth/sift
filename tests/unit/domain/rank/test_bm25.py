@@ -66,3 +66,8 @@ def test_counts_no_index_can_hold_are_damage() -> None:
         term_scores(np.array([1], np.int64), np.array([1], np.int64), 0.0)
     with pytest.raises(DamagedError, match="holds words in passages of no length"):
         slack(1.0, 0.0)
+
+
+def test_no_passage_to_score_scores_nothing_whatever_the_average() -> None:
+    none = np.zeros(0, np.int64)
+    assert term_scores(none, none, 0.0).shape == (0,)

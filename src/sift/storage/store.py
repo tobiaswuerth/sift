@@ -105,7 +105,7 @@ def _verified(transaction: Reading, path: Path, collection: CollectionId, layout
     found = readable_version(transaction, len(layout), path)
     if found == 0:
         raise StoreUnavailableError(f"{path} is no store of sift", DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
-    refuse_lacking(transaction, layout, found)
+    refuse_lacking(transaction, layout, path)
     held = first(transaction, Value, COLLECTION_HELD)
     if held is None or held.value != str(collection):
         owner = "no collection" if held is None else f"collection {held.value}"

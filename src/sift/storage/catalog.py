@@ -11,7 +11,6 @@ from typing import NamedTuple, cast
 from sift.api.collections import Audience, TitleFrom
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.ids import CollectionId
-from sift.domain.errors import DamagedError
 from sift.domain.text.records import NO_CHOICE, Chosen
 from sift.storage.database import (
     BUSY_TIMEOUT_SECONDS,
@@ -142,17 +141,14 @@ def _collection(row: CollectionRow) -> Collection:
     except (ValueError, TypeError) as error:
         said = f"the catalog's choices for {row.name} were written by a newer sift or damaged: {error}"
         raise StoreUnavailableError(said, "upgrade sift", code=Problem.STORE_NEWER) from None
-    folder, store = Path(row.folder), Path(row.store)
-    if not (folder.is_absolute() and store.is_absolute()):
-        raise DamagedError(f"the folder or the store of the collection {row.name!r} is no absolute path")
-    return Collection(CollectionId(row.id), row.name, folder, store, bool(row.active), choices)
+    return Collection(CollectionId(row.id), row.name, Path(row.folder), Path(row.store), bool(row.active), choices)
 
 
 def _up_to_date(connection: sqlite3.Connection, path: Path) -> None:
     with reading(connection) as transaction:
         found = writable_version(transaction, len(LAYOUT), path)
         if found >= len(LAYOUT):
-            refuse_lacking(transaction, LAYOUT, found)
+            refuse_lacking(transaction, LAYOUT, path)
     if found < len(LAYOUT):
         with writing(connection) as transaction:
             migrated(transaction, LAYOUT, path)
@@ -178,7 +174,6 @@ def catalog_of(home: Path, timeout: float = BUSY_TIMEOUT_SECONDS) -> Generator[s
 
 
 def collections(transaction: Reading) -> tuple[Collection, ...]:
-    refuse_lacking(transaction, LAYOUT, len(LAYOUT))
     found = rows(transaction, CollectionRow, "SELECT id, name, folder, store, active, choices FROM collections")
     return tuple(sorted(map(_collection, found), key=lambda known: (known.name.casefold(), known.name)))
 
@@ -208,6 +203,7 @@ def known_collections(home: Path) -> tuple[Collection, ...]:
         reading(connection) as transaction,
     ):
         if readable_version(transaction, len(LAYOUT), path) >= len(LAYOUT):
+            refuse_lacking(transaction, LAYOUT, path)
             return collections(transaction)
     with catalog_of(home) as connection, reading(connection) as transaction:
         return collections(transaction)

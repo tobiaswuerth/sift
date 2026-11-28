@@ -1,4 +1,5 @@
 import contextlib
+import sqlite3
 import stat
 from collections.abc import Generator
 from pathlib import Path
@@ -11,11 +12,12 @@ from sift.api.collections import (
     CollectionRemoved,
     CollectionsSwitched,
     DeactivateCollections,
+    MoveCollections,
     RemoveCollection,
 )
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
-from sift.api.indexing import IndexCollections, Skipped
+from sift.api.indexing import IndexCollections, Indexed, Skipped
 from sift.api.links import ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
 from sift.app.collections import activate, add, deactivate, remove
@@ -23,6 +25,7 @@ from sift.app.documents import documents
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.links import links, unresolved
+from sift.app.moving import move
 from sift.app.query import query
 from sift.app.search import search
 from sift.app.vsearch import vsearch
@@ -205,7 +208,21 @@ def test_a_collection_whose_store_is_read_only_is_kept_whole_saying_why(home: Pa
         with pytest.raises(StoreUnavailableError, match="is marked read-only") as refused:
             remove(home, RemoveCollection("diary"))
         (embedded,) = embed(home, EmbedCollections(("diary",)), quiet, Hashed()).collections
-    assert refused.value.remedy == READ_ONLY_REMEDY
+        with pytest.raises(StoreUnavailableError, match="is marked read-only") as unmoved:
+            move(home, MoveCollections(("diary",), to=str(home.parent / "elsewhere")), quiet)
+    assert (refused.value.remedy, unmoved.value.remedy) == (READ_ONLY_REMEDY, READ_ONLY_REMEDY)
     assert isinstance(embedded.outcome, Skipped)
     assert (embedded.outcome.remedy, "is marked read-only" in embedded.outcome.message) == (READ_ONLY_REMEDY, True)
     assert ([one.name for one in known_collections(home)], diary.store.is_file()) == (["diary", "notes"], True)
+
+
+def test_a_collection_the_catalog_holds_with_no_absolute_folder_is_passed_over_alone(home: Path) -> None:
+    with contextlib.closing(sqlite3.connect(home / "catalog.sqlite")) as catalog, catalog:
+        catalog.execute("UPDATE collections SET folder = '' WHERE name = 'notes'")
+    found = {each.name: each.outcome for each in index(home, IndexCollections(), quiet).collections}
+    assert isinstance(found["diary"], Indexed)
+    assert isinstance(found["notes"], Skipped)
+    assert (found["notes"].code, found["notes"].message) == (
+        Problem.CATALOG_DAMAGED,
+        "the catalog holds its folder as '.', no absolute path",
+    )

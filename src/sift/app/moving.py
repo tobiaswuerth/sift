@@ -20,7 +20,7 @@ from sift.storage.catalog import (
 )
 from sift.storage.leftovers import tidied
 from sift.storage.moving import TRANSFER, Copied, Transfer, held_alone, transferred
-from sift.storage.store import read_store
+from sift.storage.store import read_store, refuse_read_only
 from sift.storage.store_files import OPENED_SUFFIXES, store_files_left, unlinked
 from sift.storage.writer import sole_writer
 
@@ -65,6 +65,7 @@ def _taken(new: Path) -> InvalidRequestError:
 
 
 def _refused(home: Path, one: Collection, new: Path) -> None:
+    refuse_read_only(one.store)
     with read_store(one.store, one.id):
         pass
     others = [other.store for other in known_collections(home) if other.id != one.id]

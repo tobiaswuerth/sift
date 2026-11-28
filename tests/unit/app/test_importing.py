@@ -18,7 +18,7 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.importing import FOLDER_GONE_REMEDY, OTHER_MODEL_REMEDY, imported
 from sift.app.vsearch import vsearch
-from sift.inference.hub import EMBED_MODEL
+from sift.inference.hub import EMBED_MODEL, pinned
 from sift.storage.catalog import known_collections
 from sift.storage.former import former_collections, former_store
 from sift.storage.store_files import FORMER_CATALOG
@@ -49,7 +49,7 @@ def vectors_of(store: Path) -> dict[tuple[str, int], bytes]:
 
 def brought(home: Path, source: Path, *names: str, embedding: str = PINNED_FAKE) -> tuple[Brought | Skipped, ...]:
     asked = ImportHome(str(source), names)
-    return tuple(each.outcome for each in imported(home, asked, quiet, embedding=embedding).collections)
+    return tuple(each.outcome for each in imported(home, asked, quiet, embedding=lambda: embedding).collections)
 
 
 def test_a_home_of_sift_1_is_imported_with_its_counts_and_every_vector_kept(tmp_path: Path, notes: Path) -> None:
@@ -337,7 +337,7 @@ def test_vectors_sift_1_14_named_by_their_model_alone_are_of_the_commit_it_pinne
     with contextlib.closing(sqlite3.connect(former / "collections" / "notes.sqlite")) as connection, connection:
         connection.execute("UPDATE meta SET value = 'google/embeddinggemma-2' WHERE key = 'model'")
         connection.execute("DELETE FROM meta WHERE key = 'model_at'")
-    (done,) = brought(tmp_path / "home", former, embedding=EMBED_MODEL)
+    (done,) = brought(tmp_path / "home", former, embedding=pinned(EMBED_MODEL))
     assert isinstance(done, Brought)
     assert (done.model, done.vectors) == ("google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e", 2)
 
@@ -368,11 +368,14 @@ def test_a_broken_vector_of_sift_1_is_left_to_embed_and_the_intact_ones_are_carr
     assert embed(home, EmbedCollections(), quiet, hashed()).collections[0].outcome == Embedded(1, 0)
 
 
-def test_a_catalog_of_sift_1_whose_title_choice_no_sift_wrote_is_damaged(tmp_path: Path, notes: Path) -> None:
+@pytest.mark.parametrize("written, said", [('"bogus"', "'bogus'"), ('["heading"]', r"\['heading'\]")])
+def test_a_catalog_of_sift_1_whose_title_choice_no_sift_wrote_is_damaged(
+    tmp_path: Path, notes: Path, written: str, said: str
+) -> None:
     former = former_home(tmp_path, {"notes": notes})
     with contextlib.closing(sqlite3.connect(former / FORMER_CATALOG)) as catalog, catalog:
-        catalog.execute("""UPDATE collections SET fields = '{"title_from": "bogus"}'""")
-    with pytest.raises(StoreUnavailableError, match=r"is damaged: .*'bogus'") as refused:
+        catalog.execute("UPDATE collections SET fields = ?", (f'{{"title_from": {written}}}',))
+    with pytest.raises(StoreUnavailableError, match=f"is damaged: .*{said}") as refused:
         brought(tmp_path / "home", former)
     assert (refused.value.code, refused.value.remedy) == (Problem.STORE_UNAVAILABLE, CATALOG_REMEDY)
 
@@ -382,7 +385,7 @@ def test_vectors_of_another_model_than_sift_embeds_with_are_not_carried_and_it_i
 ) -> None:
     former = former_home(tmp_path, {"notes": notes}, hashed())
     said: list[Event] = []
-    (done,) = imported(tmp_path / "home", ImportHome(str(former)), said.append, embedding=EMBED_MODEL).collections
+    (done,) = imported(tmp_path / "home", ImportHome(str(former)), said.append).collections
     assert isinstance(done.outcome, Brought)
     assert (done.outcome.vectors_before, done.outcome.vectors, done.outcome.model) == (2, 0, PINNED_FAKE)
     assert [each.remedy for each in said if isinstance(each, Noted)] == [OTHER_MODEL_REMEDY]

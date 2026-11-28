@@ -111,7 +111,7 @@ def _choices(fields: str | None) -> Mapping[str, object]:
         raise DamagedError(f"the choices of a collection are no JSON: {error}") from None
     held = cast("dict[str, object]", read) if isinstance(read, dict) else {}
     titled = held.get("title_from")
-    if titled is not None and titled not in set(TitleFrom):
+    if titled is not None and (not isinstance(titled, str) or titled not in set(TitleFrom)):
         raise DamagedError(f"the choices of a collection take its titles from {titled!r}, which no sift wrote")
     return MappingProxyType(held)
 

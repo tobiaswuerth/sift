@@ -38,7 +38,7 @@ def changed(former: Path, *statements: str) -> None:
 
 
 def brought(home: Path, former: Path) -> Brought | Skipped:
-    (one,) = imported(home, ImportHome(str(former)), quiet, embedding=PINNED_FAKE).collections
+    (one,) = imported(home, ImportHome(str(former)), quiet, embedding=lambda: PINNED_FAKE).collections
     return one.outcome
 
 

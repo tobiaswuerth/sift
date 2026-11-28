@@ -365,3 +365,11 @@ def test_a_store_lacking_what_its_layout_makes_is_damaged(tmp_path: Path, sql: s
     assert (refused.value.code, refused.value.remedy) == (Problem.STORE_DAMAGED, DAMAGED_REMEDY)
     with pytest.raises(StoreUnavailableError, match=lacked), read_store(path, COLLECTION):
         pass
+
+
+def test_a_store_a_newer_sift_changed_lacking_what_this_layout_makes_is_said_newer(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION, (*LAYOUT, Migration(("DROP INDEX names_document",), Older.READS)))
+    with pytest.raises(StoreUnavailableError, match="newer") as refused, read_store(path, COLLECTION):
+        pass
+    assert (refused.value.code, refused.value.remedy) == (Problem.STORE_NEWER, "upgrade sift")

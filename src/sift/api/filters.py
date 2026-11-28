@@ -1,5 +1,6 @@
 import json
 import math
+import re
 import unicodedata
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -13,6 +14,7 @@ type FilterValue = str | int | float | bool
 
 MOST_INTEGER = 2**63
 MOST_VALUES = 100_000
+WHOLE = re.compile("-?[0-9]+")
 FILTER_REMEDY = (
     "give a field, an operator (=, !=, <, <=, >, >=) and values, "
     'e.g. {"field": "year", "operator": ">=", "values": [2024]}'
@@ -87,6 +89,9 @@ def _number_in(text: str, field: str) -> object:
     try:
         read = cast("object", json.loads(text, parse_constant=_no_constant))
     except ValueError:
+        if WHOLE.fullmatch(text):
+            size = "small" if text.startswith("-") else "large"
+            raise _wrong(f"the filter on {field!r}: {text[:40]}... is too {size}", "values") from None
         return text
     if isinstance(read, float) and not math.isfinite(read):
         raise _wrong(f"the filter on {field!r}: {text[:40]} is no finite number", "values")

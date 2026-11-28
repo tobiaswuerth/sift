@@ -55,6 +55,7 @@ from sift.storage.store import connected
 from sift.storage.writer import sole_writer
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
+RELATIVE_REMEDY = "remove the collection, then add its folder again"
 OUT_OF_REACH_REMEDY = "see that its folder and its store can be read, then index it again"
 IGNORE_REMEDY = f"make its {IGNORE_FILE} a file sift can read, or remove it, then index it again"
 NO_COLLECTION_REMEDY = "give a file inside a collection's folder, or its id as collection/path"
@@ -222,6 +223,9 @@ class _Indexing:
 def _indexed(one: Collection, asked: _Indexing, paths: tuple[str, ...] = ()) -> CollectionIndexed:
     report, limits = asked.report, asked.limits
     report(CollectionStarted(one.name, str(one.folder)))
+    if not one.folder.is_absolute():
+        said = f"the catalog holds its folder as {str(one.folder)!r}, no absolute path"
+        return _skipped(one, report, Skipped(Problem.CATALOG_DAMAGED, said, RELATIVE_REMEDY))
     try:
         with sole_writer(one.store, "an index"), connected(one.store, one.id) as connection:
             tidied(asked.home, one.id)

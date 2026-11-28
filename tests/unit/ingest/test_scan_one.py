@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from sift.domain.plan.ignore import ignore_of
+from sift.domain.plan.left_out import WhyLeftOut
 from sift.ingest.scan import Reach, scan_one
 from tests.files import write
 
@@ -26,3 +27,12 @@ def test_a_file_of_no_kind_sift_reads_or_gone_is_not_found(tmp_path: Path) -> No
     for named in ("a.exe", "gone.md"):
         scanned = scan_one(tmp_path / "notes", named)
         assert (scanned.found.files, scanned.refusals) == ({}, {})
+
+
+def test_a_file_named_through_a_step_up_or_in_place_leads_outside_on_every_system(tmp_path: Path) -> None:
+    write(tmp_path / "other" / "a.md", "# A\n")
+    write(tmp_path / "notes" / "b.md", "# B\n")
+    for platform in ("linux", "win32"):
+        for named in ("../other/a.md", "./b.md"):
+            scanned = scan_one(tmp_path / "notes", named, Reach(platform=platform))
+            assert (scanned.found.files, scanned.why[named]) == ({}, WhyLeftOut.OUTSIDE)

@@ -20,6 +20,7 @@ SKIPPED_FOLDERS = frozenset({"node_modules", "__pycache__"})
 GONE = (FileNotFoundError, NotADirectoryError)
 PROGRESS_EVERY = 1000
 HIDDEN_SYSTEM = stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM
+STEPS = frozenset({".", ".."})
 UNOPENABLE = "Windows cannot open a folder whose name ends in a dot or a space: rename it"
 
 
@@ -304,6 +305,9 @@ def _passed_over(root: Path, folder: str, walk: _Walk) -> WhyLeftOut | None:
 def scan_one(root: Path, relative: str, reach: Reach = WITHIN, *, links: LinkChecks = LINK_CHECKS) -> Scanned:
     seen, guard = _Seen(why={}), None if reach.follow_links else _Guard(root.resolve(), links)
     walk = _Walk(seen, [], guard, reach)
+    if any(part in STEPS for part in relative.split("/")):
+        _because(seen, relative, WhyLeftOut.OUTSIDE)
+        return _scanned(seen)
     *folders, _ = relative.split("/")
     within = ["/".join(folders[: at + 1]) for at in range(len(folders))]
     passed_over = next((why for folder in within if (why := _passed_over(root, folder, walk)) is not None), None)

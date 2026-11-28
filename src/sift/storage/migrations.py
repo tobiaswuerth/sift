@@ -107,9 +107,11 @@ def _made(migrations: tuple[Migration, ...]) -> frozenset[SchemaObject]:
         return frozenset(rows(transaction, SchemaObject, SCHEMA))
 
 
-def refuse_lacking(transaction: Reading, migrations: Sequence[Migration], found: int) -> None:
-    held = set(rows(transaction, SchemaObject, SCHEMA))
+def refuse_lacking(transaction: Reading, migrations: Sequence[Migration], path: Path) -> None:
+    found, held = version(transaction), set(rows(transaction, SchemaObject, SCHEMA))
     lacked = sorted(_made(tuple(migrations[:found])) - held, key=lambda each: (each.type != "table", each))
+    if lacked and found > len(migrations):
+        raise newer(path, found, len(migrations))
     if lacked:
         kind, name = lacked[0]
         raise DamagedError(f"it lacks the {kind} {name}")

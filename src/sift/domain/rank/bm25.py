@@ -24,6 +24,8 @@ def idf(chunks: int, df: int) -> float:
 
 
 def term_scores(tf: TermCounts, lengths: TermCounts, average: float) -> Scores:
+    if not len(tf):
+        return tf.astype(np.float64)
     if average <= 0:
         raise DamagedError(LENGTHLESS)
     counts = tf.astype(np.float64)

@@ -7,6 +7,7 @@ from sift.settings import Settings
 from tests.files import write
 from tests.former_homes import PINNED_FAKE, former_home, hashed
 from tests.surface.commands import ran
+from tests.workers import working
 
 NOTE = " note  this home holds the index of sift 1.x, which sift 2 reads once it is imported\n next  sift import\n"
 
@@ -55,3 +56,14 @@ def test_an_import_that_skips_a_collection_says_why_and_fails(settings: Settings
     code, out, err = ran(settings, "import", "--home", str(former))
     fixed = err.split("\n")[1].startswith("  fix  bring its folder back, then import it again")
     assert (code, out, fixed) == (1, "", True)
+
+
+def test_an_import_beside_a_worker_carries_the_vectors_of_the_worker_s_model(
+    settings: Settings, tmp_path: Path
+) -> None:
+    write(tmp_path / "notes" / "rl.md", "# Reward shaping\n\nShaped rewards.\n")
+    former = former_home(tmp_path, {"notes": tmp_path / "notes"}, hashed())
+    lending = Settings(tmp_path / "worker", None, tmp_path, state=tmp_path / "worker-state")
+    with working(lending, hashed()) as worker:
+        code, out, _ = ran(dataclasses.replace(settings, embed_remote=worker.address), "import", "--home", str(former))
+    assert (code, out.split("\n")[1].split()[-3:]) == (0, ["1", "->", "1"])
