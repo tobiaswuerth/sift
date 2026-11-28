@@ -33,13 +33,14 @@ while your own commands and the UI do.
 which model, the size of each store, and the links of collections holding any. A store that can't be read (a drive not
 connected, damaged, or written by a newer sift) is said beside it, `sift status` then ends with exit code 1, and
 searches pass it over; sift never makes such a store anew. `--unreadable` lists the files that could not be read, and
-why. With `--json` each collection gives `name`, `folder`, `store`, `active`, `agents` and its `contents`:
-`documents`, `chunks`, `embedded`, `model`, `stored_bytes`, `links`, `unresolved`, `fields`, `unreadable` and
-`unreadable_files`, or the reason it is `unavailable`.
+why. With `--json` each collection gives `name`, `folder`, `store`, `active`, `agents` and its `contents`,
+whose `state` is `counted`, with `documents`, `chunks`, `embedded`, `model`, `stored_bytes`, `links`, `unresolved`,
+`fields`, `unreadable` and `unreadable_files`, or `unavailable`, with the reason.
 
 **Files gone.** `sift index` drops the documents of files that are gone. But a folder that is missing, or holds none
 of its files any more, keeps what is stored, and `sift index` says so: a drive not mounted, or a folder being filled
-anew, is no folder emptied. If its files are gone for good, `sift rm NAME` forgets the collection.
+anew, is no folder emptied. A missing folder skips its collection (exit code 1); an emptied one is kept as indexed.
+If its files are gone for good, `sift rm NAME` forgets the collection.
 
 ### Leaving files out
 
@@ -74,7 +75,7 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`), but stores placed else
 
 | Path | What | Lifecycle |
 |---|---|---|
-| `catalog.sqlite`, `catalog.sqlite-wal`, `catalog.sqlite-shm` | The catalog: the collections, their folders, choices and stores | Made by the first `sift add`; the `-wal` and `-shm` files are SQLite's, beside it while a sift has it open |
+| `catalog.sqlite`, `catalog.sqlite-wal`, `catalog.sqlite-shm` | The catalog: the collections, their folders, choices and stores | Made by the first `sift add`; the `-wal` and `-shm` files are SQLite's, beside it while a sift has it open and left by one that only read it |
 | `collections/NAME.sqlite`, `NAME.sqlite-wal`, `NAME.sqlite-shm` | A collection's store: documents, passages, the keyword index, links, vectors | Made by `sift add`, moved by `sift move`, deleted by `sift rm` (one open elsewhere then, by the next `sift index`) |
 | `collections/NAME.sqlite.writer`, `NAME.sqlite.writer-journal` | Locked while a command writes the store, so one writes at a time | Made by the first write; moved and deleted with the store |
 | `NAME.sqlite.part`, `NAME.sqlite.part-journal` | A store being copied to another drive by `sift move`, at its new place | Renamed to the store once copied; deleted if the copy stops |
@@ -107,8 +108,9 @@ sift move /mnt/big/sift                             # every collection's store i
 sift move archive /mnt/big/archive.sqlite           # one collection's
 ```
 
-A move on the same drive is instant; to another drive the store is copied, then deleted. A move waits for the searches
-that read the store, and the next searches wait for it.
+A move on the same drive is instant; to another drive the store is copied, then deleted. Through `sift serve` a move
+waits for the searches that read the store, and the next searches wait for it; without it, a move refuses while another
+sift has the store open, saying so.
 
 ## Searching
 
@@ -312,7 +314,8 @@ title and aliases, and the values of the fields `--also` names, as phrases (ä, 
 under three characters left out). `links` and `unresolved` return at most 50 (`-k`).
 
 **A note just written** is found by the next search once the agent calls `reindex`: it reads those files at once, or
-drops the documents of files gone, and embeds their new passages where the collection is embedded. From the command
+drops the documents of files gone, and where the collection is embedded, embeds every passage of it that waits for a
+vector. From the command
 line, `sift index --file` does the same, and `sift embed` embeds.
 
 ## Output and errors

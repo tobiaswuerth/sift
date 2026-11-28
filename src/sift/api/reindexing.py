@@ -7,8 +7,8 @@ from sift.api.indexing import MOST_FILES, IndexResult
 from sift.api.requests import Request
 
 REINDEXED = (
-    "the files to read again now, as written, changed or deleted: ids (collection/path) or absolute paths; their "
-    "new passages are embedded too where their collection is"
+    "the files to read again now, as written, changed or deleted: ids (collection/path) or absolute paths; where "
+    "their collection is embedded, every passage of it waiting for a vector is embedded too"
 )
 
 

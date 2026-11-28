@@ -30,7 +30,8 @@ COLLECTIONS = (
 )
 REINDEX = (
     "Read files again right after writing, changing or deleting them, so that searches find them as they are now; "
-    "their new passages are embedded too where their collection is. Changes only sift's index, never a file. Says "
+    "where their collection is embedded, every passage of it waiting for a vector is embedded too. Changes only "
+    "sift's index, never a file. Says "
     "how each file went, or, if other work runs first, that its job runs on."
 )
 

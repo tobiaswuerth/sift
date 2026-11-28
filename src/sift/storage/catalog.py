@@ -33,7 +33,7 @@ from sift.storage.store import create_store, holds_nothing, left_by_add
 from sift.storage.store_files import CATALOG, delete_store
 from sift.storage.unusable import Unusable, unavailable_if_unusable
 
-CATALOG_DAMAGED_REMEDY = "move the catalog away, then add the folders again"
+CATALOG_DAMAGED_REMEDY = "restore it from a backup, or move it and collections/ away, then add the folders again"
 THE_CATALOG = Unusable("the catalog", CATALOG_DAMAGED_REMEDY, Problem.CATALOG_DAMAGED)
 WRITTEN_THROUGH = "PRAGMA synchronous = FULL"
 STORES = "collections"
