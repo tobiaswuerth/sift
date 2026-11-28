@@ -1,9 +1,8 @@
 # Benchmarks
 
-What to expect of sift, and the measurements behind its defaults. Every change to how `query` ranks is measured on
+What to expect of sift, and the measurements behind its defaults. Every change to how hybrid search ranks is measured on
 seven datasets with several rerankers and embedding models; the default is the setting best overall, not the winner of
-one dataset. To measure sift on your own documents, use
-[`sift bench`](usage.md#measuring-search-on-your-own-documents).
+one dataset. To measure sift on your own documents, use [`sift bench`](usage.md#measuring-search-on-your-own-documents).
 
 Timings come from one desktop workstation with a 24 GB NVIDIA GPU, 32 CPU threads, 192 GB of RAM and NVMe disks; the
 models run in bfloat16 on the GPU, as sift runs them.
@@ -26,21 +25,21 @@ home process's cache of results cannot answer ("warm": what they read is in memo
 
 | Use case | Mode | First call | Warm |
 |---|---|---|---|
-| A name, an id, a rare term | `search`, one word | 157 ms | 31 ms |
-| A common word ("patients") | `search`, one word | 466 ms | 184 ms |
-| A few words, all required | `search` | 261 ms | 76 ms |
-| A question of 6 to 15 words, by its keywords | `search` | 600 ms | 274 ms |
-| A quoted phrase | `search` | 732 ms | 326 ms |
-| By meaning | `vsearch` | 794 ms | 416 ms |
-| A question for RAG, reranked on the GPU | `query` | 1.08 s | 0.53 s |
-| More papers like this one | `similar` | 604 ms | 349 ms |
+| A name, an id, a rare term | keyword, one word | 157 ms | 31 ms |
+| A common word ("patients") | keyword, one word | 466 ms | 184 ms |
+| A few words, all required | keyword | 261 ms | 76 ms |
+| A question of 6 to 15 words, by its keywords | keyword | 600 ms | 274 ms |
+| A quoted phrase | keyword | 732 ms | 326 ms |
+| By meaning | semantic | 794 ms | 416 ms |
+| A question for RAG, reranked on the GPU | hybrid | 1.08 s | 0.53 s |
+| More papers like this one | `related` (similar) | 604 ms | 349 ms |
 
 - **The first semantic search** of a home process reads the codes of every passage's vector, 4.4 GB for 45.7 million,
   and loads the embedding model: 104 s from a cold disk. Later searches find both in memory.
 - **A phrase of the commonest words**, such as "in this paper we propose", would read 76 million passages here, more
   than the 10 million a search reads ([limits](limits.md)); it is refused, saying to add a rarer word.
-- **On the CPU alone**, over Swiss federal law and the notes (76,738 passages), `query` took 14 to 23 s a question
-  (median 19 s); `search`, `vsearch` and `similar` stayed under 0.2 s.
+- **On the CPU alone**, over Swiss federal law and the notes (76,738 passages), a hybrid search took 14 to 23 s a
+  question (median 19 s); keyword search, semantic search and similar documents stayed under 0.2 s.
 
 **Indexing**: reading every file into a new store, then `sift index`, which puts each collection in its topical
 order:
@@ -80,7 +79,7 @@ for 20 s (41 s the first time, when PyTorch's cache of compiled kernels is empty
 
 How well each mode finds what is sought, with the default models (nDCG@10; MRR@10 for the known items):
 
-| Kind of question | `search` (BM25) | `vsearch` | `query` |
+| Kind of question | Keyword (BM25) | Semantic | Hybrid |
 |---|---|---|---|
 | Scientific claims against abstracts (SciFact) | 0.666 | 0.840 | 0.813 |
 | Medical questions (NFCorpus) | | 0.358 | 0.361 |
@@ -93,17 +92,17 @@ How well each mode finds what is sought, with the default models (nDCG@10; MRR@1
 ### Method
 
 - Each dataset is a sift collection of JSON Lines (`id`, `title`, `text`), indexed and embedded as any other.
-- For every query, the candidates `query` reranks are collected once per embedding model: the best passage of each of
-  the 40 best documents by BM25 and of the 40 best by cosine. Every reranker scores the same pools, so differences
+- For every query, the candidates hybrid search reranks are collected once per embedding model: the best passage of each
+  of the 40 best documents by BM25 and of the 40 best by cosine. Every reranker scores the same pools, so differences
   between rerankers are theirs alone.
 - Each setting gets its mean over the seven datasets and its *worst gap*: its largest shortfall on any dataset against
   the best setting measured there.
 - Sanity check: sift's BM25 scores 0.666 on SciFact, BEIR's published baseline 0.665.
 
-### Why `query` blends in the cosine
+### Why hybrid search blends in the cosine
 
-A reranker alone ranks scientific text worse than the embedding does: with Ettin-150M, `query` scored 0.760 on SciFact
-against 0.840 for the cosine alone; rerankers trained on web search lose precision there
+A reranker alone ranks scientific text worse than the embedding does: with Ettin-150M, hybrid search scored 0.760 on
+SciFact against 0.840 for the cosine alone; rerankers trained on web search lose precision there
 ([SciRet](https://arxiv.org/abs/2608.03860)). On the arXiv known items the reranker is essential: MRR 0.936 against
 0.627 for the cosine, since only the reranker reads the front-matter values a query names. The forms tried, with
 Ettin-150M:
@@ -152,8 +151,8 @@ All score the same EmbeddingGemma-2 pools; w is the blend weight.
 
 ### Embedding models
 
-The arXiv known items search a 100,000-paper subset holding every target, as embedding all of arXiv once per model
-takes hours. Each model alone, ranking the candidates by cosine as `vsearch` does:
+The arXiv known items search a 100,000-paper subset holding every target, as embedding all of arXiv once per model takes
+hours. Each model alone, ranking the candidates by cosine as semantic search does:
 
 | Embedding model | SciFact | NFCorpus | FiQA | GermanQuAD | MLDR-de | LitSearch | arXiv subset | Mean |
 |---|---|---|---|---|---|---|---|---|
@@ -162,7 +161,7 @@ takes hours. Each model alone, ranking the candidates by cosine as `vsearch` doe
 | bge-m3 | 0.644 | 0.313 | 0.412 | **0.969** | **0.552** | 0.436 | 0.818 | 0.592 |
 | Qwen3-Embedding-0.6B | 0.700 | 0.355 | **0.469** | 0.950 | 0.531 | 0.174 | 0.819 | 0.571 |
 
-With `query` (gte-reranker-modernbert-base, w = 0.5) over each model's candidates:
+With hybrid search (gte-reranker-modernbert-base, w = 0.5) over each model's candidates:
 
 | Embedding model | SciFact | NFCorpus | FiQA | GermanQuAD | MLDR-de | LitSearch | arXiv subset | Mean |
 |---|---|---|---|---|---|---|---|---|
@@ -173,8 +172,8 @@ With `query` (gte-reranker-modernbert-base, w = 0.5) over each model's candidate
 | *Ettin-150M alone over EmbeddingGemma-2* | 0.760 | 0.374 | 0.463 | 0.937 | 0.481 | 0.568 | 0.976 | 0.651 |
 
 - **No model wins everywhere:** EmbeddingGemma-2 leads far on scientific claims and trails on financial questions.
-- **The reranker narrows the gaps** (means 0.571–0.622 alone, 0.671–0.700 under `query`), and the blend carries each
-  model's strengths through: EmbeddingGemma-2 keeps +0.06 on scientific claims, Arctic +0.04 on financial questions
+- **The reranker narrows the gaps** (means 0.571–0.622 alone, 0.671–0.700 under hybrid search), and the blend carries
+  each model's strengths through: EmbeddingGemma-2 keeps +0.06 on scientific claims, Arctic +0.04 on financial questions
   and +0.015 on long German documents.
 - **gte-reranker-modernbert-base, blended, is the best reranker under every embedding model** (worst gap 0.02–0.04).
 - **EmbeddingGemma-2 is the default:** Arctic ties it on average, and a change of default would force every index to

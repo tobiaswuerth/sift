@@ -38,8 +38,8 @@ the machine using it keeps the stores and the files.
   the GPU after 5 idle minutes, as `sift serve` does.
 - Both machines need the same major version of sift; sift refuses another and says which runs where.
 - The worker's `SIFT_EMBED_MODEL` decides the model, at its commit. `sift embed` and `reindex` refuse a worker whose
-  model differs from the store's; a search by meaning then passes the store over, saying so, and `query` searches it
-  by keywords alone.
+  model differs from the store's; a semantic search then passes the store over, saying so, and a hybrid search
+  searches it by keywords alone.
 
 ## Security
 

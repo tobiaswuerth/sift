@@ -35,7 +35,7 @@ on stdout).
    the best way to install it (check with `uv --version`), and brings a Python of its own. Without uv, ask the user
    before you install it, as [its documentation](https://docs.astral.sh/uv/getting-started/installation/) says. sift
    uses an NVIDIA GPU if there is one, else an Apple GPU, else the CPU, which is much slower at embedding and at
-   `query`.
+   hybrid search.
 
 2. **Install.**
 
@@ -69,8 +69,8 @@ on stdout).
    sift embed    # embeds every passage without a vector
    ```
 
-   The first `sift embed` downloads the embedding model from Hugging Face, the first `query` the reranker (about
-   2 GB together). Both commands process only what changed since their last run, and an interrupted `sift embed`
+   The first `sift embed` downloads the embedding model from Hugging Face, the first hybrid search the reranker
+   (about 2 GB together). Both commands process only what changed since their last run, and an interrupted `sift embed`
    continues where it stopped. On a GPU it embeds a hundred
    or more passages a second, so a large collection takes a while: run it where the user sees its progress, and don't
    let a timeout of yours end it. `sift status` shows each collection's documents, passages and how many are

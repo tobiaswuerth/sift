@@ -116,12 +116,12 @@ sift has the store open, saying so.
 
 ## Searching
 
-| Mode | Finds | Score |
-|---|---|---|
-| `search` | Exact keyword matches, ranked by BM25 | 0 and up |
-| `vsearch` | Passages close in meaning | cosine, -1 to 1 |
-| `query` | Keyword and semantic candidates reranked by a cross-encoder: the best for RAG | the reranker's, moved by the cosine |
-| `similar` | Documents like a given one, by its id | cosine, -1 to 1 |
+| Search | Command | MCP tool | Finds | Score |
+|---|---|---|---|---|
+| Keyword | `sift search` | `search`, mode `keyword` | Exact keyword matches, ranked by BM25 | 0 and up |
+| Semantic | `sift vsearch` | `search`, mode `semantic` | Passages close in meaning | cosine, -1 to 1 |
+| Hybrid | `sift query` | `search`, mode `hybrid` (the default) | Keyword and semantic candidates reranked by a cross-encoder: the best for RAG | the reranker's, moved by the cosine |
+| Similar | `sift similar` | `related` | Documents like a given one, by its id | cosine, -1 to 1 |
 
 Scores compare only the results of one search. Each result is a document with its best passage; a paper that several
 collections hold under one DOI (front-matter `doi`) is one result, the best ranked copy, listing the others under
@@ -145,7 +145,7 @@ The commands' options; the MCP tool `search` takes the same as parameters (`k`, 
 | `--adaptive` | Only the results before the largest drop in score, and five more, up to `k` |
 | `--offset N` | Leave out the first N results, to page through them: `--offset 10 -k 10` gives results 11 to 20 |
 | `--budget SECONDS` | Stop after about this long, once anything is found, with the results marked `partial` |
-| `--candidates N` | `query` only: how many passages each of keyword and semantic search hands the reranker (default 40) |
+| `--candidates N` | Hybrid search only: how many passages each of keyword and semantic search hands the reranker (default 40) |
 
 Over MCP, `search` takes up to 20 queries in one call, returning the results of each; the queries share the budget.
 
