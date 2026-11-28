@@ -248,3 +248,11 @@ def test_an_error_of_a_newer_sift_is_read_as_its_kind_or_as_internal(
 ) -> None:
     found = decoded_error(sent)
     assert (type(found), found.message, found.remedy, found.code) == (kind, "m", remedy, code)
+
+
+def test_an_error_of_a_kind_made_from_one_of_the_api_s_comes_back_as_that_kind() -> None:
+    class NarrowerError(ModelUnavailableError):
+        pass
+
+    back = decoded_error(encoded_error(NarrowerError("switched", "ask again")))
+    assert (type(back), back.message, back.remedy) == (ModelUnavailableError, "switched", "ask again")

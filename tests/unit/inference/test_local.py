@@ -352,3 +352,14 @@ def test_texts_are_embedded_longest_first_by_the_tokens_the_model_reads_not_thei
     reader.register_forward_pre_hook(heard)
     models.encode(["pruningpruningpruningpruning", "halo halo halo halo halo"], query=False)
     assert read == [7, 3]
+
+
+def test_a_reranker_named_at_a_branch_is_refused_before_it_is_loaded(tiny: Path) -> None:
+    with pytest.raises(ModelUnavailableError, match="names main, no whole commit"):
+        local(str(tiny), "owner/reranker@main").prepare_ranker()
+
+
+def test_a_model_whose_vectors_are_wider_than_sift_codes_is_refused() -> None:
+    assert width_of("a/model", 65_535) == 65_535
+    with pytest.raises(ValueError, match="a/model makes vectors of 65,536 numbers, and sift codes at most 65,535"):
+        width_of("a/model", 65_536)

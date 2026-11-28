@@ -55,3 +55,12 @@ def test_only_the_latest_questions_are_remembered_and_none_can_be_changed() -> N
             vector.flags.writeable = True
     assert questions_asked(hashed) == [("one",), ("two",), ("three",), ("two",)]
     assert np.array_equal(models.encode(["one"], query=True), hashed.encode(["one"], query=True))
+
+
+def test_a_question_is_embedded_again_once_the_models_are_others() -> None:
+    before, now = Hashed(), Hashed(name="other-words")
+    models = RememberedQuestions(before)
+    models.encode(["one"], query=True)
+    models.models = now
+    models.encode(["one"], query=True)
+    assert (questions_asked(before), questions_asked(now)) == ([("one",)], [("one",)])

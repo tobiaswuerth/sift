@@ -342,3 +342,21 @@ def test_a_search_out_of_time_widens_no_further_and_is_partial_without_a_note_of
     request = SearchVectors("comets glaciers", k=3, budget=1.0)
     found = vsearch(few_long, request, Hashed(), Rescoring(1, reads), watching)
     assert (found.partial, found.left_out, len(reads.read)) == (True, (), 1)
+
+
+def test_more_hits_than_are_rescored_are_drawn_from_four_times_as_many_so_late_pages_are_the_nearest(
+    tmp_path: Path,
+) -> None:
+    words = ("pigment", "binder", "canvas", "glaze", "varnish", "umber", "ochre", "linseed")
+    for n in range(400):
+        chosen = " ".join(words[(n * step) % len(words)] for step in (1, 3, 5))
+        write(tmp_path / "many" / f"n{n:03}.md", f"# Note {n}\n\nA {chosen} note, number {n}.\n")
+    home, model = tmp_path / "home", Hashed(width=256)
+    add(home, AddCollection(str(tmp_path / "many")))
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, model)
+    asked, few = "glaze and linseed on canvas", Rescoring(20, vectors_of)
+    exact = [hit.id for hit in vsearch(home, SearchVectors(asked, k=100), model).hits]
+    drawn = [hit.id for hit in vsearch(home, SearchVectors(asked, k=100), model, few).hits]
+    last = [hit.id for hit in vsearch(home, SearchVectors(asked, k=10, offset=90), model, few).hits]
+    assert (drawn, last) == (exact, exact[90:])

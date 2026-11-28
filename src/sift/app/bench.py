@@ -8,16 +8,19 @@ from typing import cast
 from sift.api.bench import MeasureSearches, Mode, ModeMeasured, SearchesMeasured
 from sift.api.documents import GetDocuments, WantedDocument
 from sift.api.errors import InvalidRequestError
-from sift.api.events import Advanced, Phase, PhaseDone, PhaseStarted, Reporter
-from sift.api.search import Hit, SearchHybrid, SearchKeywords, SearchVectors
+from sift.api.events import Advanced, Noted, Phase, PhaseDone, PhaseStarted, Reporter
+from sift.api.notices import Notice
+from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app import query, search, vsearch
 from sift.app.documents import documents
 from sift.app.kept_decoded import KeptDecoded
 from sift.app.loading import prepared
 from sift.app.resident import ResidentCodes
 from sift.app.searching import Watching
+from sift.domain.query.grammar import parsed
 from sift.domain.rank.measures import CUT, MOST_GRADE, Grades, found, ndcg, recall, reciprocal_rank
 from sift.domain.text.json_values import deeper_than
+from sift.domain.text.tokens import tokens
 from sift.inference.models import Models
 
 MOST_FILE_BYTES = 64 << 20
@@ -33,12 +36,18 @@ TOO_LONG = f"the file is longer than {MOST_FILE_BYTES:,} bytes"
 TOO_LONG_REMEDY = "split the cases into several files"
 MOST_NESTING = 8
 NESTED = "is nested deeper than a list of cases"
+NO_WORDS = "holds no word keyword search reads"
+NO_WORDS_REMEDY = "ask each question in words"
 
 
 @dataclass(frozen=True, slots=True)
 class Case:
     query: str
     relevant: Grades
+
+    @property
+    def keywords(self) -> str:
+        return " ".join(tokens(self.query))
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +116,17 @@ def _case(home: Path, at: int, written: object) -> Case:
     question, grades = entry.get("query"), _grades(entry.get("relevant"))
     if not isinstance(question, str) or not question.strip() or grades is None:
         raise _refused(at, "needs a query and the documents it should find")
-    return Case(question, _named(home, at, grades))
+    case = Case(question, _named(home, at, grades))
+    try:
+        SearchHybrid(question)
+        words = SearchKeywords(case.keywords).query if case.keywords else None
+        if words is not None:
+            parsed(words)
+    except InvalidRequestError as error:
+        raise InvalidRequestError(f"case {at:,}: {error.message}", error.remedy, FIELD) from None
+    if words is None:
+        raise InvalidRequestError(f"case {at:,} {NO_WORDS}", NO_WORDS_REMEDY, FIELD)
+    return case
 
 
 def cases_of(home: Path, path: Path) -> tuple[Case, ...]:
@@ -117,20 +136,25 @@ def cases_of(home: Path, path: Path) -> tuple[Case, ...]:
     return tuple(_case(home, at, each) for at, each in enumerate(cast("list[object]", read), 1))
 
 
-def _hits(mode: Mode, asked: Searches, question: str) -> tuple[Hit, ...]:
+def _result(mode: Mode, asked: Searches, case: Case) -> SearchResult:
     home, collections, watching = asked.home, asked.collections, asked.watching
     if mode is Mode.KEYWORD:
-        return search.search(home, SearchKeywords(question, collections=collections, compact=True), watching).hits
+        return search.search(home, SearchKeywords(case.keywords, collections=collections, compact=True), watching)
     if mode is Mode.SEMANTIC:
-        request = SearchVectors(question, collections=collections, compact=True)
-        return vsearch.vsearch(home, request, asked.models, watching=watching).hits
+        request = SearchVectors(case.query, collections=collections, compact=True)
+        return vsearch.vsearch(home, request, asked.models, watching=watching)
     return query.query(
-        home, SearchHybrid(question, collections=collections, compact=True), asked.models, watching=watching
-    ).hits
+        home, SearchHybrid(case.query, collections=collections, compact=True), asked.models, watching=watching
+    )
 
 
-def _scored(hits: Sequence[Hit], case: Case) -> tuple[float, float, float]:
-    said = found([(hit.id, *hit.also) for hit in hits], case.relevant)
+def _said(mode: Mode, notice: Notice) -> Noted:
+    where = f"{notice.collection}: " if notice.collection else ""
+    return Noted(f"{mode}: {where}{notice.message}", notice.remedy, notice.code)
+
+
+def _scored(result: SearchResult, case: Case) -> tuple[float, float, float]:
+    said = found([(hit.id, *hit.also) for hit in result.hits], case.relevant)
     return (
         ndcg(said.ranked, said.relevant, CUT),
         reciprocal_rank(said.ranked, said.relevant, CUT),
@@ -139,15 +163,19 @@ def _scored(hits: Sequence[Hit], case: Case) -> tuple[float, float, float]:
 
 
 def _mode(mode: Mode, asked: Searches, cases: Sequence[Case], clock: Callable[[], float]) -> ModeMeasured:
-    _hits(mode, asked, cases[0].query)
+    _result(mode, asked, cases[0])
     report = asked.report
     report(PhaseStarted(Phase.MEASURE, len(cases)))
-    started, scores = clock(), list[tuple[float, float, float]]()
+    started, scores, notices = clock(), list[tuple[float, float, float]](), dict[Notice, None]()
     for case in cases:
-        scores.append(_scored(_hits(mode, asked, case.query), case))
+        result = _result(mode, asked, case)
+        scores.append(_scored(result, case))
+        notices.update(dict.fromkeys((*result.unsearched, *result.left_out)))
         report(Advanced(len(scores)))
     elapsed = clock() - started
     report(PhaseDone(len(scores)))
+    for notice in notices:
+        report(_said(mode, notice))
     means = [sum(each[at] for each in scores) / len(scores) for at in range(3)]
     return ModeMeasured(mode, *means, ms_per_query=1000 * elapsed / len(cases))
 

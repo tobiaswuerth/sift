@@ -113,3 +113,39 @@ def test_a_model_of_the_hub_named_without_a_revision_is_refused(name: str) -> No
 def test_a_branch_a_tag_or_a_short_commit_is_refused_as_they_move_or_may_mean_several(revision: str) -> None:
     with pytest.raises(ModelUnavailableError, match=f"names {revision}, no whole commit"):
         pinned(f"owner/model@{revision}")
+
+
+@pytest.mark.parametrize("name, folder", [(f"owner/model@{COMMIT}", "owner/model"), (EMBED_MODEL, EMBED_MODEL)])
+def test_a_folder_here_named_like_a_model_of_the_hub_is_refused_not_loaded_in_its_place(
+    tmp_path: Path, name: str, folder: str
+) -> None:
+    (tmp_path / folder).mkdir(parents=True)
+    asked = (
+        "from sift.api.errors import ModelUnavailableError\nfrom sift.inference.hub import hub\n"
+        f"try:\n    hub({name!r})\nexcept ModelUnavailableError as error:\n    print(error.message)"
+    )
+    environment = clean_environment(PYTHONPATH=os.pathsep.join(sys.path))
+    found = subprocess.run(
+        [sys.executable, "-c", asked],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    there = (tmp_path / folder).resolve()
+    said = f"{there} lies here and is named like the model {folder}, which it would stand in for"
+    assert found.stdout.strip() == said
+
+
+def test_a_whole_commit_written_in_capitals_is_the_commit_it_names() -> None:
+    named = f"owner/model@{COMMIT.upper()}"
+    assert (pinned(named), hub(named)) == (f"owner/model@{COMMIT}", ("owner/model", COMMIT))
+
+
+def test_a_commit_named_without_its_model_is_refused_naming_the_shape_of_a_name() -> None:
+    with pytest.raises(ModelUnavailableError, match=f"the model @{COMMIT} names no model") as refused:
+        pinned(f"@{COMMIT}")
+    shape = "owner/model@<commit>"
+    assert refused.value.remedy == f"name a commit of it, e.g. {shape} from its page under Files and versions"

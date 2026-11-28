@@ -15,7 +15,7 @@ MOST_QUESTIONS = 256
 class RememberedQuestions:
     models: Models
     kept: int = MOST_QUESTIONS
-    vectors: OrderedDict[str, Halves] = field(default_factory=OrderedDict[str, Halves])
+    vectors: OrderedDict[tuple[str, str], Halves] = field(default_factory=OrderedDict[tuple[str, str], Halves])
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
@@ -37,15 +37,15 @@ class RememberedQuestions:
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         if not query or len(texts) != 1:
             return self.models.encode(texts, query=query)
-        (text,) = texts
+        key = (self.models.name, texts[0])
         with self.lock:
-            found = self.vectors.get(text)
+            found = self.vectors.get(key)
             if found is not None:
-                self.vectors.move_to_end(text)
+                self.vectors.move_to_end(key)
                 return found
         made = read_only(self.models.encode(texts, query=True))
         with self.lock:
-            self.vectors[text] = made
+            self.vectors[key] = made
             while len(self.vectors) > self.kept:
                 self.vectors.popitem(last=False)
         return made

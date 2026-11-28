@@ -7,13 +7,13 @@ from typing import cast
 
 import pytest
 
-from sift.api.collections import AddCollection
+from sift.api.collections import AddCollection, DeactivateCollections
 from sift.api.embedding import CollectionEmbedded, EmbedCollections, Embedded
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem
-from sift.api.events import Advanced, Event, Noted, Phase, PhaseDone, PhaseStarted
+from sift.api.events import Advanced, CollectionStarted, Event, Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, Skipped
-from sift.app.collections import add
-from sift.app.embedding import BROKEN_REMEDY, Embedding, embed, models_held
+from sift.app.collections import add, deactivate
+from sift.app.embedding import BROKEN_REMEDY, FORGOTTEN, FORGOTTEN_REMEDY, Embedding, embed, models_held
 from sift.app.indexing import index
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference.prepared import ModelsPrepared
@@ -198,6 +198,21 @@ def test_a_reset_says_which_store_it_could_not_clear(home: Path, tmp_path: Path)
     assert next(event.text for event in said if isinstance(event, Noted)).startswith(
         "its vectors could not be forgotten:"
     )
+
+
+def test_a_reset_says_an_inactive_collection_whose_vectors_it_forgot_is_left_unembedded(
+    home: Path, tmp_path: Path
+) -> None:
+    write(tmp_path / "more" / "a.md", "# A\n\nAnother note.\n")
+    add(home, AddCollection(str(tmp_path / "more")))
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
+    deactivate(home, DeactivateCollections(("more",)))
+    said: list[Event] = []
+    (redone,) = embed(home, EmbedCollections(reset=True), said.append, Hashed()).collections
+    assert (redone.name, counted(store(home, "more"), "SELECT count(*) FROM vectors")) == ("notes", 0)
+    assert [(each.text, each.remedy) for each in said if isinstance(each, Noted)] == [(FORGOTTEN, FORGOTTEN_REMEDY)]
+    assert CollectionStarted("more", str(tmp_path / "more")) in said
 
 
 @dataclass(slots=True)

@@ -15,7 +15,7 @@ from transformers import PreTrainedTokenizerBase
 from transformers.utils import logging as transformers_logging
 
 from sift.api.errors import ModelUnavailableError
-from sift.domain.codec.codes import Floats, Halves
+from sift.domain.codec.codes import MOST_BITS, Floats, Halves
 from sift.inference.accelerator import CACHES, MACHINE, Device, Machine, emptied, host_full, placed, too_large
 from sift.inference.batches import Attempt, BatchShape, in_batches
 from sift.inference.held import (
@@ -60,6 +60,8 @@ FULL_REMEDIES = MappingProxyType(
 def width_of(name: str, found: int | None) -> int:
     if found is None:
         raise ValueError(f"{name} says not how wide its vectors are: name an embedding model")
+    if found > MOST_BITS:
+        raise ValueError(f"{name} makes vectors of {found:,} numbers, and sift codes at most {MOST_BITS:,}")
     return found
 
 
@@ -147,6 +149,7 @@ def _embedder(name: str, device: Device) -> Loaded:
 
 
 def _ranker(name: str, device: Device) -> Ranker:
+    pinned(name)
     repository, revision = hub(name)
 
     def load(*, local_files_only: bool) -> Ranker:

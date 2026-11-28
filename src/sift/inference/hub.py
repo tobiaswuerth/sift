@@ -25,6 +25,9 @@ MOVING = (
     "other weights"
 )
 COMMIT_REMEDY = "name a commit of it, e.g. {name}@<commit> from its page under Files and versions"
+SHADOWED = "{folder} lies here and is named like the model {model}, which it would stand in for"
+SHADOWED_REMEDY = "run sift in another folder, or rename that one"
+SOME_MODEL = "owner/model"
 
 
 def _read_by_the_model(folder: Path, path: Path) -> bool:
@@ -45,6 +48,19 @@ def _revision_refused(name: str, repository: str, revision: str) -> ModelUnavail
     return ModelUnavailableError(said, COMMIT_REMEDY.format(name=repository))
 
 
+def _commit(revision: str) -> str | None:
+    lowered = revision.lower()
+    return lowered if COMMIT.fullmatch(lowered) else None
+
+
+def _unnamed(name: str, repository: str, at: str) -> ModelUnavailableError:
+    if at and not repository:
+        said = f"the model {name} names no model, only a commit"
+        return ModelUnavailableError(said, COMMIT_REMEDY.format(name=SOME_MODEL))
+    said = f"the model {name} names no commit, so its vectors could not be told from those of its next weights"
+    return ModelUnavailableError(said, COMMIT_REMEDY.format(name=name.rstrip("@")))
+
+
 def pinned(name: str) -> str:
     if name in PINNED:
         return f"{name}@{PINNED[name]}"
@@ -54,19 +70,27 @@ def pinned(name: str) -> str:
         return f"{whole}#{_stamp(whole)}"
     repository, at, revision = name.rpartition("@")
     if at and REPOSITORY.fullmatch(repository) and REVISION.fullmatch(revision):
-        if COMMIT.fullmatch(revision) is None:
+        commit = _commit(revision)
+        if commit is None:
             raise _revision_refused(name, repository, revision)
-        return name
-    raise ModelUnavailableError(
-        f"the model {name} names no commit, so its vectors could not be told from those of its next weights",
-        COMMIT_REMEDY.format(name=name.rstrip("@")),
-    )
+        return f"{repository}@{commit}"
+    raise _unnamed(name, repository, at)
 
 
-def hub(name: str) -> tuple[str, str | None]:
+def _named(name: str) -> tuple[str, str | None]:
+    if name in PINNED:
+        return name, PINNED[name]
     if Path(name).is_dir():
         return name, None
     repository, at, revision = name.rpartition("@")
     if at and REPOSITORY.fullmatch(repository) and REVISION.fullmatch(revision):
-        return repository, revision
-    return name, PINNED.get(name)
+        return repository, _commit(revision) or revision
+    return name, None
+
+
+def hub(name: str) -> tuple[str, str | None]:
+    repository, revision = _named(name)
+    if revision is not None and Path(repository).exists():
+        said = SHADOWED.format(folder=Path(repository).resolve(), model=repository)
+        raise ModelUnavailableError(said, SHADOWED_REMEDY)
+    return repository, revision

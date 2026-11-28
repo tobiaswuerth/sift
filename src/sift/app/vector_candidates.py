@@ -26,6 +26,7 @@ QUERY_REMEDY = "word the query otherwise; if the model keeps failing, report it 
 WIDENED_REMEDY = "narrow the search with a path or filters, or ask for every passage"
 WIDER = 4
 MOST_WIDER = WIDER**2
+POOLED = 4
 
 type ExactRows = tuple[Ids, Halves]
 type ExactReader = Callable[[Reading, Ids], ExactRows]
@@ -92,15 +93,15 @@ def _guarded(stores: Open, each: Searching, allowed: Passing | None) -> Guarded 
     return None if allowed is None else Guarded(stores, each, allowed)
 
 
-def _nearest(stores: Open, query: Floats, want: int, read: ExactReader) -> tuple[Near, ...]:
-    held = stores.embedded()
+def _nearest(stores: Open, query: Floats, want: tuple[int, int], read: ExactReader) -> tuple[Near, ...]:
+    held, (found, pool) = stores.embedded(), want
 
     def exact(store: int, chunks: Ids) -> ExactRows:
         one = held[store][0]
         return stores.guarded(one, partial(read, one.transaction, chunks))
 
     allowed = [_guarded(stores, one, vectors.allowed) for one, vectors in held]
-    return nearest([vectors.coded for _, vectors in held], query, want, Reads(exact, allowed), rescore=want)
+    return nearest([vectors.coded for _, vectors in held], query, found, Reads(exact, allowed), rescore=pool)
 
 
 def _owned(stores: Open, near: tuple[Near, ...]) -> dict[int, int]:
@@ -135,12 +136,16 @@ def _capped(stores: Open, read: int, best: tuple[Near, ...]) -> Nearest:
     return Nearest(best, cut=True)
 
 
+def pooled(k: int, rescore: int) -> int:
+    return max(rescore, -(-POOLED * k // rescore) * rescore)
+
+
 def near(stores: Open, wanted: Best, query: Floats, asked: Rescoring) -> Nearest:
     chunks = sum(len(vectors.coded.ids) for _, vectors in stores.embedded())
-    want, documents = max(asked.rescore, wanted.k), None
+    want, documents, pool = max(asked.rescore, wanted.k), None, pooled(wanted.k, asked.rescore)
     farthest = want * MOST_WIDER
     while True:
-        found = _nearest(stores, query, want, asked.read)
+        found = _nearest(stores, query, (want, max(want, pool)), asked.read)
         best = _best(wanted, found, _owned(stores, found))
         if len(best) >= wanted.k or want >= chunks or len(found) < want:
             return Nearest(best)

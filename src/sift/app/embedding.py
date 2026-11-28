@@ -28,6 +28,8 @@ from sift.storage.writer import sole_writer
 
 RESET_ALL_REMEDY = "embed again with reset, naming no collection"
 BROKEN_REMEDY = "embed again; if they stay, the model fails on their text"
+FORGOTTEN = "its vectors are forgotten, and it is inactive, so it is not embedded now"
+FORGOTTEN_REMEDY = "embed it by its name, or activate it and embed"
 FEWEST_COMPILED = 20_000
 
 
@@ -132,9 +134,10 @@ def _reset(home: Path, report: Reporter, ready: Callable[[], None], embedding_no
     failed = {one.id: error for one in known if (error := _forgotten(one)) is not None}
     now = {one.id for one in embedding_now}
     for one in known:
-        if one.id in failed and one.id not in now:
+        if one.id not in now:
             report(CollectionStarted(one.name, str(one.folder)))
-            report(Noted(failed[one.id].message, failed[one.id].remedy, failed[one.id].code))
+            gone = failed.get(one.id)
+            report(Noted(FORGOTTEN, FORGOTTEN_REMEDY) if gone is None else Noted(gone.message, gone.remedy, gone.code))
     return failed
 
 

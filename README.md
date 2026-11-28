@@ -135,7 +135,7 @@ None needed: sift picks the device, its GPU memory budget and batch sizes itself
 | Variable | Default | Purpose |
 |---|---|---|
 | `SIFT_HOME` | `~/.sift` | The catalog, logs, the worker's key, and the stores unless moved |
-| `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model, at a whole commit (`owner/model@<40 hex digits>`), or a folder; run `sift embed --reset` after a change |
+| `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model, at a whole commit (`owner/model@<40 hex digits>`), or a folder, known by where it lies and the sizes and times of its files; run `sift embed --reset` after a change |
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder, named the same way |
 | `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed and rerank on: the `https://<key>@<machine>:8766` address it prints |
 | `SIFT_OCR` | `auto` | Where scans are read: `auto` on a GPU, `on` also on the CPU (slow), `off` never |

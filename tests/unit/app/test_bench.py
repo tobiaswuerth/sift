@@ -6,7 +6,7 @@ import pytest
 
 from sift.api.bench import MeasureSearches, Mode, ModeMeasured
 from sift.api.errors import InvalidRequestError
-from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
+from sift.api.events import Event, Noted, Phase, PhaseDone, PhaseStarted
 from sift.app.bench import MOST_FILE_BYTES, Case, cases_of, measured
 from sift.domain.rank.measures import MOST_GRADE, ndcg
 from tests.homes import home_of
@@ -149,3 +149,34 @@ def test_a_file_that_is_no_json_too_long_or_unreadable_is_refused(home: Path, tm
     for name, said in (("broken.json", "is no JSON"), ("long.json", "is longer than"), ("none.json", "cannot be read")):
         with pytest.raises(InvalidRequestError, match=said):
             cases_of(home, tmp_path / name)
+
+
+def test_a_question_written_as_an_agent_asks_it_is_searched_by_its_words_in_keyword_mode(
+    home: Path, tmp_path: Path, models: Hashed
+) -> None:
+    asked = [{"query": "does reward shaping (and -2 tricks) help?", "relevant": ["notes/rl.md"]}]
+    result = measured(home, MeasureSearches(str(written(tmp_path, asked))), models, lambda _: None, Ticking())
+    (keyword,) = [each for each in result.modes if each.mode is Mode.KEYWORD]
+    assert (keyword.recall, keyword.mrr) == (1.0, 1.0)
+
+
+@pytest.mark.parametrize(
+    "question, said",
+    [("x" * 10_001, "case 1: query is 10,001 characters long, not 1 to 10,000"), ("?? -", "case 1 holds no word")],
+)
+def test_a_question_no_mode_could_search_is_refused_as_the_file_is_read(
+    home: Path, tmp_path: Path, question: str, said: str
+) -> None:
+    with pytest.raises(InvalidRequestError, match=said) as refused:
+        cases_of(home, written(tmp_path, [{"query": question, "relevant": ["notes/rl.md"]}]))
+    assert refused.value.field == "file"
+
+
+def test_what_a_mode_could_not_search_is_said_once(tmp_path: Path, models: Hashed) -> None:
+    home, heard = home_of(tmp_path, NOTES), list[Event]()
+    measured(home, MeasureSearches(str(written(tmp_path, CASES))), models, heard.append, Ticking())
+    said = [each.text for each in heard if isinstance(each, Noted)]
+    assert said == [
+        "vsearch: notes: it holds no vectors yet",
+        "query: notes: 3 of its passages hold no vector yet: a search by meaning passes them over",
+    ]

@@ -1,11 +1,12 @@
 import json
 import re
 import socket
+import threading
 from collections.abc import Generator, Sequence
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
-from typing import override
+from typing import cast, override
 
 import numpy as np
 import pytest
@@ -21,14 +22,14 @@ from sift.app.vsearch import vsearch
 from sift.domain.codec.codes import Floats, Halves
 from sift.domain.text.embedding import RECIPE
 from sift.inference.prepared import ModelsPrepared
-from sift.inference.remote import MODEL_HEADER, MOST_TEXTS, Remote, fingerprint, shows
+from sift.inference.remote import MODEL_HEADER, MOST_TEXTS, Remote, Waits, fingerprint, shows
 from sift.interfaces.worker.keys import worker_key
 from sift.settings import Settings
 from sift.storage.vectors import EMBED_REMEDY
 from tests.homes import home_of, quiet
 from tests.models import Hashed
 from tests.serving import VERSION
-from tests.waits import paused, until
+from tests.waits import joined, paused, until
 from tests.workers import LOOPBACK, QUICK, LiveWorker, canned, nobody_listens, working
 
 TEXTS = ["brush strokes", "pigments"]
@@ -322,3 +323,43 @@ def test_a_worker_no_address_of_whose_name_answers_is_said_unreachable() -> None
     nobody = WorkerAddress("workstation.test", nobody_listens(), "token", "pin")
     with pytest.raises(ModelUnavailableError, match="is unreachable or failed"):
         Remote(nobody, VERSION, refusing_first).prepare()
+
+
+def test_a_worker_that_takes_the_connection_and_says_nothing_is_given_up_on_within_the_connect_wait() -> None:
+    failed = list[ModelUnavailableError]()
+
+    def asked(remote: Remote) -> None:
+        with pytest.raises(ModelUnavailableError) as refused:
+            remote.prepare()
+        failed.append(refused.value)
+
+    with socket.create_server((LOOPBACK, 0)) as silent:
+        mute = WorkerAddress(LOOPBACK, cast("tuple[str, int]", silent.getsockname())[1], "token", "pin")
+        thread = threading.Thread(target=asked, args=(Remote(mute, VERSION, waits=Waits(connect=0.2)),), daemon=True)
+        thread.start()
+        joined(thread)
+    assert [each.message.split(": ")[0] for each in failed] == [
+        f"embedding remote {mute.address} is unreachable or failed"
+    ]
+
+
+def test_vectors_of_a_worker_that_are_no_unit_vectors_are_refused(tmp_path: Path) -> None:
+    long = np.array([[50, 0, 0, 0], [0, 1, 0, 0]], np.float16).tobytes()
+    answers = {"/": (200, json.dumps(ABOUT).encode()), "/embed": (200, long)}
+    with canned(worker_key(tmp_path), answers, EMBEDDER) as address:
+        remote = Remote(address, VERSION)
+        told = f"embedding remote {address.address} answered a vector of length 50, not 1"
+        with pytest.raises(ModelUnavailableError, match=re.escape(told)):
+            remote.encode(["a", "b"], query=False)
+        remote.close()
+
+
+def test_a_worker_whose_vectors_are_wider_than_sift_codes_is_refused(tmp_path: Path) -> None:
+    wide = {"/": (200, json.dumps({**ABOUT, "width": 70_000}).encode())}
+    with canned(worker_key(tmp_path), wide) as address, pytest.raises(ModelUnavailableError) as refused:
+        Remote(address, VERSION).prepare()
+    told = f"embedding remote {address.address} embeds with an/embedder, whose vectors hold 70,000 numbers"
+    assert (refused.value.message, refused.value.remedy) == (
+        f"{told}: sift codes at most 65,535",
+        "lend a model whose vectors hold fewer numbers",
+    )

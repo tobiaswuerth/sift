@@ -37,7 +37,6 @@ ERROR_KINDS: Mapping[str, type[SiftError]] = MappingProxyType(
         "internal": InternalError,
     }
 )
-KIND_OF: Mapping[type[SiftError], str] = MappingProxyType({kind: name for name, kind in ERROR_KINDS.items()})
 PROBLEMS: Mapping[str, Problem] = MappingProxyType({each.value: each for each in Problem})
 FREE: frozenset[object] = frozenset({Fields, FieldValue})
 
@@ -232,7 +231,7 @@ def read_answer[T](kind: type[T], data: object) -> T:
 
 def encoded_error(error: SiftError) -> Json:
     return {
-        "kind": KIND_OF[type(error)],
+        "kind": next(name for name, kind in ERROR_KINDS.items() if isinstance(error, kind)),
         "code": error.code.value,
         "message": error.message,
         "remedy": error.remedy,

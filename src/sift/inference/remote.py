@@ -17,7 +17,7 @@ import numpy as np
 from sift.api.errors import ModelUnavailableError
 from sift.api.package import PACKAGE
 from sift.api.serving import EMBED_REMOTE_VARIABLE, WorkerAddress
-from sift.domain.codec.codes import Floats, Halves
+from sift.domain.codec.codes import MOST_BITS, Floats, Halves
 from sift.domain.text.embedding import RECIPE
 from sift.domain.text.wording import counted
 from sift.inference.prepared import ModelsPrepared
@@ -41,8 +41,19 @@ AGAIN_REMEDY = "ask again: this sift then takes the worker's model as it is now"
 MODEL_HEADER = "Sift-Model"
 NOTHING_SAID = "nothing a worker says of itself"
 CLOSED_BY_THE_WORKER = (ConnectionError, ssl.SSLEOFError)
+UNIT_SLACK = 0.01
+WIDE_REMEDY = "lend a model whose vectors hold fewer numbers"
 
 type Resolve = Callable[[str, int], Sequence[tuple[int, object]]]
+
+
+@dataclass(frozen=True, slots=True)
+class Waits:
+    connect: float = CONNECT_SECONDS
+    answer: float = ANSWER_SECONDS
+
+
+WAITS = Waits()
 
 
 def addresses(host: str, port: int) -> list[tuple[int, object]]:
@@ -70,23 +81,24 @@ def unverified_tls() -> ssl.SSLContext:
     return tls
 
 
-def _connected(ips: Sequence[str], port: int) -> socket.socket:
+def _connected(ips: Sequence[str], port: int, seconds: float) -> socket.socket:
     *others, last = ips
     for ip in others:
         try:
-            return socket.create_connection((ip, port), CONNECT_SECONDS)
+            return socket.create_connection((ip, port), seconds)
         except OSError:
             continue
-    return socket.create_connection((last, port), CONNECT_SECONDS)
+    return socket.create_connection((last, port), seconds)
 
 
 @final
 class PinnedConnection(http.client.HTTPSConnection):
-    def __init__(self, worker: WorkerAddress, resolve: Resolve) -> None:
+    def __init__(self, worker: WorkerAddress, resolve: Resolve, waits: Waits = WAITS) -> None:
         self.tls: ssl.SSLContext = unverified_tls()
-        super().__init__(worker.host, worker.port, timeout=ANSWER_SECONDS, context=self.tls)
+        super().__init__(worker.host, worker.port, timeout=waits.answer, context=self.tls)
         self.worker: WorkerAddress = worker
         self.resolve: Resolve = resolve
+        self.waits: Waits = waits
 
     @override
     def connect(self) -> None:
@@ -95,10 +107,10 @@ class PinnedConnection(http.client.HTTPSConnection):
             said = f"embedding remote {self.worker.host} resolves to no address this Python can connect to"
             raise ModelUnavailableError(said, REACH_REMEDY)
         ordered = sorted(reachable, key=lambda each: each[0] != socket.AF_INET)
-        raw = _connected([ip for _, ip in ordered], self.port)
+        raw = _connected([ip for _, ip in ordered], self.port, self.waits.connect)
         raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        raw.settimeout(ANSWER_SECONDS)
         held = self.tls.wrap_socket(raw, server_hostname=self.host)
+        held.settimeout(self.waits.answer)
         if not shows(held.getpeercert(binary_form=True), self.worker.pin):
             held.close()
             said = f"embedding remote {self.worker.address} shows another certificate than its key: not that worker"
@@ -173,13 +185,21 @@ def _checked(worker: WorkerAddress, release: str, raw: bytes) -> WorkerSays:
         raise _unfit(worker, "no model")
     if width is None:
         raise _unfit(worker, "no length of its vectors")
+    if width > MOST_BITS:
+        told = f"embedding remote {worker.address} embeds with {model}, whose vectors hold {width:,} numbers"
+        raise ModelUnavailableError(f"{told}: sift codes at most {MOST_BITS:,}", WIDE_REMEDY)
     return WorkerSays(model, width)
 
 
 def _vectors_in(worker: WorkerAddress, raw: bytes, texts: int, width: int) -> Halves:
     if len(raw) != texts * width * HALF_BYTES:
         raise _unfit(worker, f"{len(raw):,} bytes for {counted(texts, 'text')} of {width:,} numbers each")
-    return np.frombuffer(raw, np.float16).reshape(texts, width)
+    vectors = np.frombuffer(raw, np.float16).reshape(texts, width)
+    lengths = np.linalg.norm(vectors.astype(np.float32), axis=1)
+    off = lengths[np.isfinite(lengths) & (lengths > 0) & (np.abs(lengths - 1) > UNIT_SLACK)]
+    if len(off):
+        raise _unfit(worker, f"a vector of length {off[0]:.3g}, not 1")
+    return vectors
 
 
 def _scores_in(worker: WorkerAddress, raw: bytes, texts: int) -> Floats:
@@ -222,6 +242,7 @@ def _unreachable(worker: WorkerAddress, error: BaseException) -> ModelUnavailabl
 class WorkerLine:
     worker: WorkerAddress
     resolve: Resolve = addresses
+    waits: Waits = WAITS
     lock: threading.Lock = field(default_factory=threading.Lock)
     connection: PinnedConnection | None = None
 
@@ -259,7 +280,7 @@ class WorkerLine:
                 again = False
 
     def _connected(self) -> PinnedConnection:
-        connection = PinnedConnection(self.worker, self.resolve)
+        connection = PinnedConnection(self.worker, self.resolve, self.waits)
         weakref.finalize(self, connection.close)
         self.connection = connection
         return connection
@@ -278,10 +299,11 @@ class Remote:
     release: str
     resolve: Resolve = addresses
     said: WorkerSays | None = None
+    waits: Waits = WAITS
     line: WorkerLine = field(init=False)
 
     def __post_init__(self) -> None:
-        self.line = WorkerLine(self.worker, self.resolve)
+        self.line = WorkerLine(self.worker, self.resolve, self.waits)
 
     @property
     def name(self) -> str:

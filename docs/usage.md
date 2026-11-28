@@ -386,7 +386,8 @@ command loads what it needs itself.
 ## Measuring search on your own documents
 
 `sift bench` runs each search mode over questions whose answers you know and reports nDCG@10, MRR@10, Recall@10 and the
-time per query. Write the questions as an agent would ask them, with the ids of the documents that answer them:
+time per query. Write the questions as an agent would ask them, with the ids of the documents that answer them; the
+keyword mode searches their words, and what a mode could not search is said:
 
 ```json
 [

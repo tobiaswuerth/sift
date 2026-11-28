@@ -62,10 +62,10 @@ class Lend:
 LEND = Lend()
 
 
-def _said(settings: Settings, models: Resting, version: str) -> dict[str, object]:
+def _said(settings: Settings, models: Resting, name: str, version: str) -> dict[str, object]:
     width = width_of(models.encode([WIDTH_PROBE], query=False))
     return {
-        "model": models.name,
+        "model": name,
         "width": width,
         "reranker": settings.rerank_model,
         "version": version,
@@ -81,8 +81,9 @@ def lent(
     with sole_writer(settings.home / FOLDER, WORKING):
         key = worker_key(settings.home)
         models = how.models(settings)
+        name = models.name
         prepared(report, (models.prepare, models.prepare_ranker))
-        said = _said(settings, models, version)
+        said = _said(settings, models, name, version)
         with (
             how.bind(request.port, request.host) as listening,
             ThreadPoolExecutor(1, thread_name_prefix="sift-worker") as work,

@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, ModelUnavailableError, Problem, StoreUnavailableError
 from sift.api.events import Event, Lending, Phase, PhaseDone, PhaseStarted
 from sift.api.serving import ALL_INTERFACES, WORKER_PORT, Served, ServeWorker, WorkerAddress
 from sift.inference.loading import Deferred
@@ -121,3 +121,12 @@ def test_the_worker_takes_no_tls_older_than_1_2(settings: Settings) -> None:
         tls = worker.running.server.config.ssl
         assert tls is not None
         assert tls.minimum_version == ssl.TLSVersion.TLSv1_2
+
+
+def test_a_worker_whose_model_is_named_at_a_branch_is_refused_before_any_model_is_loaded(settings: Settings) -> None:
+    heard = list[Event]()
+    branch = replace(settings, embed_model="owner/model@main")
+    how = replace(QUICK, models=LEND.models, bind=on_the_loopback)
+    with pytest.raises(ModelUnavailableError, match="names main, no whole commit"):
+        lend(branch, HERE, VERSION, heard.append, how)
+    assert heard == []
