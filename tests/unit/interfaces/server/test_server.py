@@ -1,6 +1,7 @@
 import http.client
 import json
 import logging
+import signal
 import threading
 from pathlib import Path
 from typing import cast
@@ -20,12 +21,14 @@ from sift.interfaces.server.endpoint import (
     Endpoint,
     found,
     own_endpoint,
+    written,
 )
 from sift.interfaces.server.gate import WAITING_FOR_ALONE, WAITING_FOR_READS
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import (
     NOT_RESTED,
     RESTED,
+    STOPPING_SIGNALS,
     HomeServer,
     Serve,
     reading_pool,
@@ -276,13 +279,28 @@ def test_a_search_sent_while_a_store_is_removed_waits_for_it_then_runs(settings:
 
 
 def interrupted(_event: Event) -> None:
-    raise KeyboardInterrupt
+    signal.raise_signal(signal.SIGINT)
 
 
 def test_ctrl_c_as_the_home_process_says_where_it_listens_stops_it_as_at_any_other_time(settings: Settings) -> None:
     ran = list[HomeServer]()
     served = serve(settings, ServeHome(port=0), "2.0.0", interrupted, Serve(ran.append))
-    assert (ran, served.url.startswith("http://127.0.0.1:"), found(settings)) == ([], True, None)
+    stopped = [each.server.should_exit for each in ran]
+    assert (stopped, served.url.startswith("http://127.0.0.1:"), found(settings)) == ([True], True, None)
+
+
+def interrupted_once_written(path: Path, endpoint: Endpoint) -> None:
+    written(path, endpoint)
+    signal.raise_signal(signal.SIGINT)
+
+
+def test_ctrl_c_right_after_the_home_process_lists_itself_stops_it_as_at_any_other_time(settings: Settings) -> None:
+    stopping, said = (signal.SIGINT, *STOPPING_SIGNALS), list[Event]()
+    before = [signal.getsignal(each) for each in stopping]
+    served = serve(settings, ServeHome(port=0), "2.0.0", said.append, Serve(write_endpoint=interrupted_once_written))
+    assert (served.url.startswith("http://127.0.0.1:"), said) == (True, [Listening(served.url, str(settings.home))])
+    assert (found(settings), own_endpoint(settings).exists()) == (None, False)
+    assert [signal.getsignal(each) for each in stopping] == before
 
 
 def test_serve_says_where_it_listens_serves_and_leaves_nothing_behind(settings: Settings) -> None:
